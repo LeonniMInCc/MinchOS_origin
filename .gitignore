@@ -1,0 +1,7 @@
+target/
+*.bin
+*.asm.txt
+qemu.log
+.DS_Store
+.idea/
+.vscode/
