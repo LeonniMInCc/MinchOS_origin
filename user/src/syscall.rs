@@ -9,6 +9,7 @@ use core::arch::asm;
 
 const SYSCALL_WRITE: usize = 64;
 const SYSCALL_EXIT: usize = 93;
+const SYSCALL_YIELD: usize = 124;
 
 /// 执行一次系统调用。
 ///
@@ -42,6 +43,15 @@ pub fn sys_write(fd: usize, buffer: &[u8]) -> isize {
 /// 裸的 write，可以传任意地址 —— 专门用来测试内核的参数校验。
 pub fn sys_write_raw(fd: usize, ptr: usize, len: usize) -> isize {
     syscall(SYSCALL_WRITE, [fd, ptr, len])
+}
+
+/// 主动让出 CPU。
+///
+/// 这个调用**会返回** —— 但返回的时刻是"内核再次把 CPU 分给我"。
+/// 从程序自己的视角看，这一行执行得有点慢，仅此而已；
+/// 实际上中间可能已经跑过了好几个别的程序。
+pub fn sys_yield() -> isize {
+    syscall(SYSCALL_YIELD, [0, 0, 0])
 }
 
 /// 退出当前程序。永不返回。

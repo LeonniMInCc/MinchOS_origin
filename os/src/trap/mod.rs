@@ -11,9 +11,9 @@
 
 mod context;
 
-use crate::batch::run_next_app;
 use crate::csr::{decode_scause, scause, sepc, stval, stvec, Exception, Trap};
 use crate::syscall::syscall;
+use crate::task::exit_current_and_run_next;
 use core::arch::global_asm;
 
 pub use context::TrapContext;
@@ -78,7 +78,7 @@ pub fn trap_handler(cx: &mut TrapContext) -> &mut TrapContext {
                 stval,
                 sepc::read()
             );
-            run_next_app();
+            exit_current_and_run_next();
         }
 
         // --- 非法指令：比如用户程序试图执行只有内核能用的指令 ---
@@ -88,7 +88,7 @@ pub fn trap_handler(cx: &mut TrapContext) -> &mut TrapContext {
                 stval,
                 sepc::read()
             );
-            run_next_app();
+            exit_current_and_run_next();
         }
 
         // --- 还没处理的情况 ---

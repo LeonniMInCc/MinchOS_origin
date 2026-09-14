@@ -33,14 +33,15 @@ use core::arch::global_asm;
 mod console;
 #[macro_use]
 mod logging;
-mod batch;
 mod config;
 mod csr;
 mod lang_items;
+mod loader;
 mod mm;
 mod sbi;
 mod sync;
 mod syscall;
+mod task;
 mod trap;
 
 // 把入口汇编整段嵌进来，让它参与链接
@@ -144,8 +145,8 @@ pub fn rust_main() -> ! {
     clear_bss();
 
     println!("{}", BANNER);
-    println!("       CCNUOS v0.3.0 — RISC-V 64 (SV39) 教学操作系统");
-    println!("       第三周：特权级切换 / 系统调用 / 批处理\n");
+    println!("       CCNUOS v0.4.0 — RISC-V 64 (SV39) 教学操作系统");
+    println!("       第四周：多道程序 / 任务切换 / 协作式调度\n");
 
     info!("内核已进入 S 态，启动栈可用，.bss 已清零");
     print_memory_layout();
@@ -154,9 +155,10 @@ pub fn rust_main() -> ! {
     mm::heap_test();
 
     trap::init();
-    batch::init();
+    loader::load_apps();
+    task::init();
 
-    // 一去不回：直接 sret 进 U 态运行第一个用户程序。
-    // 此后内核只在 trap 发生时才会重新获得执行权。
-    batch::run_next_app()
+    // 一去不回：__switch 到第一个任务，它会走 __restore 进 U 态。
+    // 此后内核只在 trap（系统调用、异常）发生时才重新获得执行权。
+    task::run_first_task()
 }

@@ -69,12 +69,10 @@ env:
 # 先编译用户程序，再剥成裸二进制 —— 内核的 build.rs 会用 .incbin
 # 把这些 .bin 嵌进自己的 .data 段。本章还没有文件系统，
 # 这是内核携带用户程序的唯一办法。
+# 每个程序要链接到不同的基址（本章没有分页，它们同时躺在物理内存里），
+# 所以必须逐个编译。详见 tools/build-user.py。
 user: env
-	@cd $(USER_DIR) && $(CARGO) build --release
-	@for app in $(USER_NAMES); do \
-		$(OBJCOPY) --strip-all $(USER_OUT)/$$app -O binary $(USER_OUT)/$$app.bin; \
-	done
-	@echo "用户程序: $(USER_NAMES)"
+	@python3 tools/build-user.py
 
 # 注意：必须 cd 进 os/ 再调 cargo。cargo 是按"当前工作目录"向上查找
 # .cargo/config.toml 的，用 --manifest-path 的话 os/.cargo/config.toml

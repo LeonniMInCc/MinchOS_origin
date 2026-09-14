@@ -3,7 +3,8 @@
 //! 第 3 周只有 `write`，而且只认标准输出。第 10 周会把它扩展成
 //! 真正的文件描述符表，第 13 周接上文件系统。
 
-use crate::batch::is_user_accessible;
+use crate::loader::is_accessible_by;
+use crate::task::current_task_id;
 
 /// 标准输出的文件描述符。
 const FD_STDOUT: usize = 1;
@@ -29,14 +30,19 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
         return -1;
     }
 
-    if !is_user_accessible(buf as usize, len) {
+    // 检查是针对**当前任务**做的：现在内存里同时躺着好几个程序，
+    // 所以这个检查除了挡住"读内核内存"，还顺带挡住了"读别的程序的槽位"。
+    let app_id = current_task_id();
+    if !is_accessible_by(app_id, buf as usize, len) {
         // 注意这里打印的是 ptr 和 len 而不是 [start, end)：
         // 用户完全可以传一个让 start + len 溢出的参数（这正是下面
         // 02bad_syscall_arg 干的事），而在 debug 构建下整数溢出会 panic ——
         // 内核就被一条日志搞崩了。**错误处理路径本身也在信任边界上。**
         error!(
-            "sys_write：用户程序传来了越界的缓冲区 ptr={:#x} len={}，拒绝",
-            buf as usize, len
+            "sys_write：任务 {} 传来了越界的缓冲区 ptr={:#x} len={}，拒绝",
+            app_id,
+            buf as usize,
+            len
         );
         return -1;
     }

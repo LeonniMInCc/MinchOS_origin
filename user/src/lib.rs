@@ -27,7 +27,12 @@ pub mod console;
 mod lang_items;
 pub mod syscall;
 
-pub use syscall::{sys_exit, sys_write, sys_write_raw};
+pub use syscall::{sys_exit, sys_write, sys_write_raw, sys_yield};
+
+/// 主动让出 CPU，让别的程序跑一会儿。
+pub fn yield_now() {
+    sys_yield();
+}
 
 /// 用户程序的真正入口。
 ///

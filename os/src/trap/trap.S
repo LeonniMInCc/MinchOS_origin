@@ -89,15 +89,22 @@ __alltraps:
 #
 # 有两种进入方式，它们走的是同一段代码 —— 这正是设计的精妙之处：
 #
-#   1) 从 trap_handler 自然落下来，a0 = 刚处理完的 TrapContext
-#   2) 被 batch::run_next_app 直接调用，a0 = 伪造的初始 TrapContext
+#   1) 从 __alltraps 自然落下来（处理完一次 trap）
+#   2) 被 __switch 的 `ret` 跳进来（一个任务第一次被调度）
 #
-# 第 2 种就是"启动一个用户程序"。我们不需要另写一套进入用户态的逻辑，
-# 只要伪造一份"仿佛刚从用户态陷入"的现场，再走一遍返回流程就行了。
+# 两种情况下 sp 都**已经**指向要恢复的 TrapContext，所以这里不需要
+# 任何调整：
+#
+#   情况 1：`call trap_handler` 按调用约定会把 sp 原样还回来，
+#           它仍指向 __alltraps 腾出的那块 TrapContext。
+#   情况 2：__switch 从 TaskContext 里加载的 sp，正是 loader::init_app_cx
+#           压入 TrapContext 后的栈顶。
+#
+# 第 3 周这里还有一条 `mv sp, a0`，因为那时 __restore 是被 Rust 当普通
+# 函数调用的（参数在 a0）。改成任务切换模型后 a0 不再承载这个含义，
+# 那条指令必须删掉 —— 留着的话，第一次调度时会把 sp 设成 __switch
+# 遗留在 a0 里的垃圾值。
 __restore:
-    # a0 指向要恢复的 TrapContext，把 sp 指过去
-    mv sp, a0
-
     # --- 先恢复 CSR ---
     # 必须赶在恢复通用寄存器之前，因为这里要用 t0/t1/t2 当中转
     ld t0, 32*8(sp)     # sstatus：决定 sret 回到哪个特权级

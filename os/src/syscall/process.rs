@@ -1,21 +1,32 @@
-//! 进程相关的系统调用。
+//! 进程（本章还只是"任务"）相关的系统调用。
 //!
-//! 第 3 周是批处理系统：程序一个接一个跑，`exit` 就意味着"换下一个"。
 //! 第 9 周引入真正的进程模型后，`exit` 会变成"通知父进程、回收资源、
-//! 变成僵尸等待被 wait"。
+//! 变成僵尸等待被 wait"。现在它只是把任务标记成已退出然后换人。
 
-use crate::batch::run_next_app;
+use crate::task::{current_task_id, exit_current_and_run_next, suspend_current_and_run_next};
 
-/// `exit(code)` —— 用户程序主动退出。
-///
-/// 返回类型是 `!`：这个调用永远不会返回到用户程序。
-/// [`run_next_app`] 会直接 `__restore` 到下一个程序，
-/// 当前程序的执行流就此终止。
+/// `exit(code)` —— 当前任务主动退出。永不返回。
 pub fn sys_exit(exit_code: i32) -> ! {
     if exit_code == 0 {
-        info!("用户程序正常退出，退出码 {}", exit_code);
+        info!("任务 {} 正常退出，退出码 {}", current_task_id(), exit_code);
     } else {
-        warn!("用户程序退出，退出码 {}", exit_code);
+        warn!("任务 {} 退出，退出码 {}", current_task_id(), exit_code);
     }
-    run_next_app()
+    exit_current_and_run_next()
+}
+
+/// `yield()` —— 主动让出 CPU。
+///
+/// 这是第 4 周整章的意义所在：**协作式调度**。
+/// 任务自愿放弃 CPU，调度器挑下一个就绪任务跑。
+///
+/// 注意这个函数是**会返回**的 —— 但返回的时刻是"当前任务再次被调度上来"。
+/// 中间可能已经跑过了好几个别的任务。这种"时间上不连续的返回"是
+/// 内核代码的常态，初看很别扭，习惯了就好。
+///
+/// 协作式调度的致命弱点也在这里：任务不 yield，谁也拿它没办法。
+/// 一个 `loop {}` 就能把整个系统卡死。第 5 周的时钟中断才能解决这个问题。
+pub fn sys_yield() -> isize {
+    suspend_current_and_run_next();
+    0
 }
