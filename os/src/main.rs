@@ -33,14 +33,20 @@ use core::arch::global_asm;
 mod console;
 #[macro_use]
 mod logging;
+mod batch;
 mod config;
+mod csr;
 mod lang_items;
 mod mm;
 mod sbi;
 mod sync;
+mod syscall;
+mod trap;
 
 // 把入口汇编整段嵌进来，让它参与链接
 global_asm!(include_str!("entry.asm"));
+// 由 build.rs 生成：把所有用户程序的二进制嵌进内核的 .data 段
+global_asm!(include_str!("link_app.S"));
 
 // 链接脚本导出的布局符号。
 //
@@ -138,8 +144,8 @@ pub fn rust_main() -> ! {
     clear_bss();
 
     println!("{}", BANNER);
-    println!("       CCNUOS v0.2.0 — RISC-V 64 (SV39) 教学操作系统");
-    println!("       第二周：内核堆 / 伙伴系统分配器\n");
+    println!("       CCNUOS v0.3.0 — RISC-V 64 (SV39) 教学操作系统");
+    println!("       第三周：特权级切换 / 系统调用 / 批处理\n");
 
     info!("内核已进入 S 态，启动栈可用，.bss 已清零");
     print_memory_layout();
@@ -147,6 +153,10 @@ pub fn rust_main() -> ! {
     mm::init();
     mm::heap_test();
 
-    info!("第二周目标达成，主动关机");
-    sbi::shutdown(false)
+    trap::init();
+    batch::init();
+
+    // 一去不回：直接 sret 进 U 态运行第一个用户程序。
+    // 此后内核只在 trap 发生时才会重新获得执行权。
+    batch::run_next_app()
 }

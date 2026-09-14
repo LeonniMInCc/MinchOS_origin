@@ -11,7 +11,8 @@
 |---|---|
 | ✅ 第 1 周 (`v0.1`) | 裸机启动、SBI 串口输出、分级日志、内存布局自省 |
 | ✅ 第 2 周 (`v0.2`) | 伙伴系统堆分配器，`Box`/`Vec`/`String`/`BTreeMap` 可用 |
-| ⬜ 第 3 周 | 特权级切换、Trap 处理、第一个用户程序 |
+| ✅ 第 3 周 (`v0.3`) | 特权级切换、Trap 处理、系统调用、批处理运行 5 个用户程序 |
+| ⬜ 第 4 周 | 多道程序、`__switch` 任务切换、`sys_yield` |
 
 完整计划见 [ROADMAP.md](ROADMAP.md)。
 
@@ -70,8 +71,18 @@ ccnuos/
         ├── logging.rs      分级彩色日志
         ├── lang_items.rs   panic handler
         ├── sync.rs         UPSafeCell：单核下的内部可变性
-        └── mm/
-            └── heap_allocator.rs   伙伴系统分配器 + #[global_allocator]
+        ├── csr.rs          RISC-V 控制状态寄存器访问
+        ├── batch.rs        批处理：装载并运行用户程序
+        ├── mm/
+        │   └── heap_allocator.rs   伙伴系统分配器 + #[global_allocator]
+        ├── trap/
+        │   ├── trap.S      手写的 __alltraps / __restore
+        │   └── context.rs  TrapContext
+        └── syscall/        系统调用分派
+
+user/                     用户程序（独立 crate，链接到 0x80400000）
+├── src/lib.rs            最小运行库：_start、clear_bss、println!
+└── src/bin/              5 个用户程序，含 3 个故意作恶的
 ```
 
 ## 设计取舍

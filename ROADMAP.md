@@ -19,9 +19,11 @@
       引入 `UPSafeCell`
       *验收*：内核里能用 `Box`/`Vec`/`String`/`BTreeMap`，反复分配释放后用量精确归零
 
-- [ ] **第 3 周 · 特权级切换**　`v0.3`　16 h　⚠️ 第一个坎
-      `TrapContext`，手写 `__alltraps` / `__restore`，`stvec`，`sys_write` / `sys_exit`，用户程序链进内核
-      *验收*：U 态程序 `ecall` 打印后正常退出；非法指令与越权访问被内核捕获并杀掉进程
+- [x] **第 3 周 · 特权级切换**　`v0.3`　16 h　⚠️ 第一个坎
+      `TrapContext`，手写 `__alltraps` / `__restore`，`stvec`，手写 CSR 访问层，
+      `sys_write` / `sys_exit`，`build.rs` 用 `.incbin` 把用户程序嵌进内核
+      *验收*：✅ 5 个用户程序依次运行；非法指令与访存错误被捕获、进程被杀而内核存活；
+      内核拒绝用户传来的越界指针（含整数溢出构造）；GDB 能在 `trap_handler` 断点并回溯到 `__alltraps`
 
 - [ ] **第 4 周 · 多道程序**　`v0.4`　14 h
       `TaskControlBlock`，手写 `__switch` 切换内核栈，`sys_yield`
