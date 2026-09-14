@@ -286,6 +286,22 @@ impl PhysPageNum {
         unsafe { core::slice::from_raw_parts_mut(pa.0 as *mut u8, PAGE_SIZE) }
     }
 
+    /// 这一页里 `[offset, offset + len)` 这一段。
+    ///
+    /// 和 `&mut get_bytes_array()[a..b]` 的区别同 [`PhysPageNum::pte_at`]：
+    /// 后者返回的引用会被借用检查器绑到临时切片上，拿不到 `'static`。
+    pub fn bytes_at(&self, offset: usize, len: usize) -> &'static mut [u8] {
+        assert!(
+            offset + len <= PAGE_SIZE,
+            "[{}, {}) 超出了一页的范围",
+            offset,
+            offset + len
+        );
+        let pa: PhysAddr = (*self).into();
+        // SAFETY: 上面刚断言过范围不超过一页。生命周期见 get_bytes_array 的说明。
+        unsafe { core::slice::from_raw_parts_mut((pa.0 + offset) as *mut u8, len) }
+    }
+
     /// 把这一页的开头当作一个 `T`。
     pub fn get_mut<T>(&self) -> &'static mut T {
         let pa: PhysAddr = (*self).into();

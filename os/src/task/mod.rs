@@ -23,24 +23,26 @@ mod switch;
 mod tcb;
 
 use crate::config::MAX_APP_NUM;
-use crate::loader::{init_app_cx, num_app};
+use crate::loader::{get_app_data, num_app};
 use crate::sbi::shutdown;
 use crate::sync::UPSafeCell;
+use crate::trap::TrapContext;
+use alloc::vec::Vec;
 use context::TaskContext;
 use switch::__switch;
 use tcb::{TaskControlBlock, TaskStatus};
 
 struct TaskManagerInner {
-    num_app: usize,
-    tasks: [TaskControlBlock; MAX_APP_NUM],
+    /// 第 8 周起 `TaskControlBlock` 不再是 `Copy`（它拥有一整个地址空间），
+    /// 所以定长数组换成了 `Vec`。
+    tasks: Vec<TaskControlBlock>,
     current_task: usize,
 }
 
 impl TaskManagerInner {
     const fn empty() -> Self {
         Self {
-            num_app: 0,
-            tasks: [const { TaskControlBlock::uninit() }; MAX_APP_NUM],
+            tasks: Vec::new(),
             current_task: 0,
         }
     }
@@ -50,18 +52,31 @@ static TASK_MANAGER: UPSafeCell<TaskManagerInner> =
     // SAFETY: 单核，且所有访问都限制在 exclusive_access 的短作用域内。
     unsafe { UPSafeCell::new(TaskManagerInner::empty()) };
 
-/// 初始化任务管理器：为每个程序准备好初始上下文。
+/// 初始化任务管理器：为每个程序建立地址空间和内核栈。
 pub fn init() {
     let n = num_app();
+    // 内核栈从跳板页往下依次排布，每个占 KERNEL_STACK_SIZE + 一页 guard page。
+    // 任务太多会一路排到用户地址空间里去 —— 在这里拦住。
+    assert!(n <= MAX_APP_NUM, "用户程序数量 {n} 超过上限 {MAX_APP_NUM}");
     let mut inner = TASK_MANAGER.exclusive_access();
-    inner.num_app = n;
-    for (app_id, task) in inner.tasks.iter_mut().enumerate().take(n) {
-        // goto_restore 让这个任务第一次被调度时直接走 __restore，
-        // 于是它会"从一次不存在的 trap 返回"到用户态 —— 和第 3 章同一个套路。
-        task.task_cx = TaskContext::goto_restore(init_app_cx(app_id));
-        task.task_status = TaskStatus::Ready;
+    for app_id in 0..n {
+        inner.tasks.push(TaskControlBlock::new(get_app_data(app_id), app_id));
     }
-    info!("任务管理器就绪：{} 个任务，抢占式轮转调度", n);
+    info!("任务管理器就绪：{} 个任务，各自拥有独立地址空间", n);
+}
+
+/// 当前任务地址空间的 `satp`。`trap_return` 用它切回用户页表。
+pub fn current_user_token() -> usize {
+    let inner = TASK_MANAGER.exclusive_access();
+    inner.tasks[inner.current_task].user_token()
+}
+
+/// 当前任务的 [`TrapContext`]。
+///
+/// 它住在用户地址空间里，内核通过物理页号 + 恒等映射访问它。
+pub fn current_trap_cx() -> &'static mut TrapContext {
+    let inner = TASK_MANAGER.exclusive_access();
+    inner.tasks[inner.current_task].trap_cx()
 }
 
 /// 当前正在运行的任务编号。系统调用里用它做权限检查。
@@ -71,7 +86,7 @@ pub fn current_task_id() -> usize {
 
 /// 从当前任务的下一个开始环形扫描，找第一个就绪的任务。
 fn find_next_ready(inner: &TaskManagerInner) -> Option<usize> {
-    let n = inner.num_app;
+    let n = inner.tasks.len();
     let current = inner.current_task;
     (current + 1..current + 1 + n)
         .map(|id| id % n)
@@ -139,7 +154,7 @@ pub fn exit_current_and_run_next() -> ! {
 pub fn run_first_task() -> ! {
     let next_cx = {
         let mut inner = TASK_MANAGER.exclusive_access();
-        assert!(inner.num_app > 0, "没有任何用户程序可以运行");
+        assert!(!inner.tasks.is_empty(), "没有任何用户程序可以运行");
         inner.tasks[0].task_status = TaskStatus::Running;
         inner.current_task = 0;
         &raw const inner.tasks[0].task_cx

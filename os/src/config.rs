@@ -6,78 +6,7 @@
 ///
 /// 够装下进程表、页表、文件描述符表这些元数据了。注意它是一个静态数组，
 /// 整块落在 `.bss` 段里 —— 所以这个数字直接决定内核镜像加载后占多少物理内存。
-/// 第 1 章那张布局表里 `.bss` 还是 0 字节，这一章之后会一下子涨到 3 MiB。
 pub const KERNEL_HEAP_SIZE: usize = 3 * 1024 * 1024;
-
-/// 用户程序区的起始地址。
-///
-/// 本章没有分页，所有程序**同时**躺在物理内存里，各占一个
-/// [`APP_SIZE_LIMIT`] 大小的槽位：
-///
-/// ```text
-///   程序 0 → 0x80400000
-///   程序 1 → 0x80420000
-///   程序 2 → 0x80440000
-/// ```
-///
-/// 每个程序在链接时就被写死了自己槽位的地址（见 `tools/build-user.py`）。
-///
-/// 第 7 周引入分页后，这会变成**虚拟地址**，所有程序都可以以为
-/// 自己独占 `0x80400000`，而实际占用互不相同的物理页。
-/// 这个地址必须**在内核镜像之上**。内核的 `.bss` 里有 3 MiB 的堆，
-/// 加上代码、数据、各任务的栈，镜像一直长到 `0x8056xxxx` 附近 ——
-/// 所以起点要留出足够余量。`loader::load_apps` 开头有一条断言
-/// 在每次开机时核对这件事。
-pub const APP_BASE_ADDRESS: usize = 0x8080_0000;
-
-/// 单个用户程序的槽位大小：128 KiB。
-pub const APP_SIZE_LIMIT: usize = 0x2_0000;
-
-/// 用户程序区的终点（不含）。
-pub const fn app_region_end() -> usize {
-    APP_BASE_ADDRESS + MAX_APP_NUM * APP_SIZE_LIMIT
-}
-
-/// 用户栈区的起点，紧接在用户程序区之后。
-///
-/// # 为什么从第 7 周起用户栈不能再放在内核 `.bss` 里
-///
-/// 开启分页后，"用户能不能访问某一页"由页表项的 `U` 位决定。
-/// 内核 `.bss` 整体是不带 `U` 的（里面有内核堆、内核栈这些绝不能给
-/// 用户碰的东西），如果用户栈混在里面，就没法只给它单独开 `U`。
-///
-/// 所以把用户栈单独拎出来，放进一块自己的物理区域。这也让
-/// "哪些内存是给用户的"在内存布局上一目了然。
-pub const USER_STACK_BASE: usize = app_region_end();
-
-/// 用户栈区的终点（不含）。物理页帧分配器必须从这里之后开始 ——
-/// 否则它会把用户程序或用户栈正躺着的内存当成空闲页分出去。
-pub const fn user_stack_region_end() -> usize {
-    USER_STACK_BASE + MAX_APP_NUM * USER_STACK_SIZE
-}
-
-/// 第 `app_id` 个任务的用户栈范围 `[低地址, 栈顶)`。
-pub const fn user_stack_range(app_id: usize) -> (usize, usize) {
-    let bottom = USER_STACK_BASE + app_id * USER_STACK_SIZE;
-    (bottom, bottom + USER_STACK_SIZE)
-}
-
-/// 第 `app_id` 个程序的槽位基址。
-///
-/// 必须和 `tools/build-user.py` 里的计算完全一致 —— 内核算错了，
-/// 程序就会被装到一个和它链接地址不符的位置上，启动即跑飞。
-pub const fn app_base(app_id: usize) -> usize {
-    APP_BASE_ADDRESS + app_id * APP_SIZE_LIMIT
-}
-
-/// 用户栈大小：8 KiB。
-pub const USER_STACK_SIZE: usize = 4096 * 2;
-
-/// 内核栈大小：8 KiB。用户程序陷入内核后，内核在这上面运行。
-pub const KERNEL_STACK_SIZE: usize = 4096 * 2;
-
-/// 最多能链接进内核的用户程序数量。
-pub const MAX_APP_NUM: usize = 16;
 
 /// 页大小：4 KiB。SV39 的基本单位。
 pub const PAGE_SIZE: usize = 4096;
@@ -89,7 +18,57 @@ pub const PAGE_SIZE_BITS: usize = 12;
 ///
 /// QEMU virt 默认给 128 MiB 内存，起点 `0x80000000`，所以终点是 `0x88000000`。
 /// `[ekernel, MEMORY_END)` 这一段就是可以分给用户进程的物理页。
-///
-/// 换到别的平台必须改 —— 多报了会分配出不存在的内存，
-/// 少报了则白白浪费。
 pub const MEMORY_END: usize = 0x8800_0000;
+
+// ---------------------------------------------------------------------------
+// 虚拟地址布局（第 8 周起，每个进程一个地址空间）
+// ---------------------------------------------------------------------------
+
+/// 跳板页：整个 64 位虚拟地址空间的**最后一页**。
+///
+/// # 为什么需要它
+///
+/// 从第 8 周起，每个进程都有自己的地址空间，内核也有。trap 发生时
+/// 必须从用户页表切到内核页表 —— 而 `csrw satp` 执行完之后，
+/// **取下一条指令用的已经是新页表了**。
+///
+/// 所以执行切换的那段代码，必须在切换前后的两个地址空间里都存在，
+/// 而且位于**完全相同的虚拟地址**。否则 `satp` 一换，PC 立刻指向
+/// 一片没有映射的虚空 —— 而且此时连 trap 都处理不了，CPU 会直接卡死。
+///
+/// 解法就是：把这段代码单独放一页，在**每一个**地址空间里都映射到
+/// 同一个虚拟地址上。这一页就叫"跳板"(trampoline)。
+///
+/// 选最高那一页是因为它离用户程序的地址范围最远，不会撞上。
+pub const TRAMPOLINE: usize = usize::MAX - PAGE_SIZE + 1;
+
+/// 每个进程的 [`crate::trap::TrapContext`] 在它自己地址空间里的位置：
+/// 紧挨着跳板页下面。
+///
+/// 为什么要钉在固定虚拟地址？因为 `__alltraps` 需要一个地方存寄存器，
+/// 而它运行时手上只有 `sscratch` 一个可用的值。把 TrapContext 固定在
+/// 一个常量地址上，`sscratch` 就可以一直存它，省掉一层间接。
+pub const TRAP_CONTEXT: usize = TRAMPOLINE - PAGE_SIZE;
+
+/// 用户栈大小：8 KiB。
+pub const USER_STACK_SIZE: usize = 4096 * 2;
+
+/// 内核栈大小：8 KiB。用户程序陷入内核后，内核在这上面运行。
+pub const KERNEL_STACK_SIZE: usize = 4096 * 2;
+
+/// 最多能链接进内核的用户程序数量。
+pub const MAX_APP_NUM: usize = 16;
+
+/// 第 `app_id` 个任务的内核栈在**内核地址空间**里的位置 `(低地址, 栈顶)`。
+///
+/// 从跳板页往下依次排布，每个栈之间留一页不映射的空隙 ——
+/// 这就是 **guard page**：栈一旦写穿，立刻触发缺页异常，
+/// 而不是悄悄改写隔壁任务的内核栈。
+///
+/// 内核栈溢出是最难查的一类 bug：症状会出现在另一个任务的数据上，
+/// 现场和起因毫无关系。一页地址空间换一个"立刻崩在现场"，非常划算。
+pub const fn kernel_stack_position(app_id: usize) -> (usize, usize) {
+    // 跳板页自己占一页，所以从 TRAMPOLINE 往下第一个栈也要先跳过它
+    let top = TRAMPOLINE - PAGE_SIZE - app_id * (KERNEL_STACK_SIZE + PAGE_SIZE);
+    (top - KERNEL_STACK_SIZE, top)
+}

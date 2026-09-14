@@ -29,7 +29,8 @@
 //!   └─────────┴────────────────────────┴─────┴─┴─┴─┴─┴─┴─┴─┴─┘
 //! ```
 
-use super::address::{PhysPageNum, VirtPageNum};
+use super::address::{PhysPageNum, VirtAddr, VirtPageNum};
+use crate::config::PAGE_SIZE;
 use super::frame_allocator::{frame_alloc, FrameTracker};
 use alloc::vec::Vec;
 use core::fmt::{self, Debug, Formatter};
@@ -259,6 +260,83 @@ impl Default for PageTable {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ---------------------------------------------------------------------------
+// 跨地址空间访问
+// ---------------------------------------------------------------------------
+
+impl PageTable {
+    /// 由一个 `satp` 值构造出一个**只读句柄**，用来查询别的地址空间。
+    ///
+    /// 它的 `frames` 是空的 —— 这个句柄不拥有任何页帧，`Drop` 时什么都不做。
+    /// 所以它只能用来 `translate`，绝不能用来 `map`（那会让新分配的中间级
+    /// 页表无人认领，直接泄漏）。
+    pub fn from_token(satp: usize) -> Self {
+        Self {
+            root_ppn: PhysPageNum::from(satp & ((1usize << 44) - 1)),
+            frames: Vec::new(),
+        }
+    }
+}
+
+/// 把用户地址空间里的一段缓冲区，翻译成内核可以直接读写的若干片段。
+///
+/// # 为什么第 8 周必须有这个函数
+///
+/// 第 7 周内核和用户共用一个地址空间，内核拿到用户指针可以直接解引用
+/// （代价是必须打开 `sstatus.SUM`）。现在两者的地址空间彻底分开了 ——
+/// 用户传来的 `0x10234` 在内核页表里根本不存在，解引用只会缺页。
+///
+/// 所以内核必须**手动走一遍用户的页表**，把虚拟地址翻译成物理地址，
+/// 再通过恒等映射去访问。`SUM` 也因此可以关掉了。
+///
+/// # 返回值为什么是"若干片段"
+///
+/// 用户的缓冲区在它自己的地址空间里是连续的，但对应的物理页可能散落在
+/// 内存各处。所以只能按页切开，返回一组片段。
+///
+/// # 安全检查
+///
+/// 返回 `None` 表示这段缓冲区不合法。检查有三条：
+///
+/// 1. `ptr + len` 不能溢出
+/// 2. 每一页都必须在用户页表里**有映射**
+/// 3. 每一页都必须带 `U` 位
+///
+/// 第 3 条是关键。没有它，用户就能把一个内核地址（比如跳板页）传进来，
+/// 让内核代自己去读 —— 内核访存是不受 `U` 位约束的。
+///
+/// 注意这三条检查已经完全取代了前几章那个手写的
+/// `is_accessible_by`：不再需要知道任何区间常量，
+/// **"用户能不能访问这块内存"这个问题直接问页表就好了。**
+pub fn translated_byte_buffer(
+    token: usize,
+    ptr: usize,
+    len: usize,
+) -> Option<Vec<&'static mut [u8]>> {
+    if len == 0 {
+        return Some(Vec::new());
+    }
+    let end = ptr.checked_add(len)?;
+
+    let page_table = PageTable::from_token(token);
+    let mut buffers = Vec::new();
+    let mut cur = ptr;
+
+    while cur < end {
+        let va = VirtAddr::from(cur);
+        let pte = page_table.translate(va.floor())?;
+        if !pte.flags().contains(PTEFlags::U | PTEFlags::R) {
+            return None; // 没映射、或者是一个用户无权访问的内核页
+        }
+        let offset = va.page_offset();
+        let chunk = (PAGE_SIZE - offset).min(end - cur);
+        buffers.push(pte.ppn().bytes_at(offset, chunk));
+        cur += chunk;
+    }
+
+    Some(buffers)
 }
 
 // ---------------------------------------------------------------------------

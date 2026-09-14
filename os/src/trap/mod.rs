@@ -1,23 +1,44 @@
 //! Trap 处理。
 //!
-//! "Trap"是 RISC-V 对两类事件的统称：
+//! 第 8 周起，trap 处理多了一件事：**换地址空间**。整条路径是：
 //!
-//! - **异常 (Exception)**：由当前这条指令同步触发。`ecall`（系统调用）、
-//!   非法指令、访存越界都属于这一类。
-//! - **中断 (Interrupt)**：由外部事件异步触发。时钟、外设。第 5 周才会用到。
+//! ```text
+//!   用户程序（用户地址空间）
+//!     │ ecall / 异常 / 时钟中断
+//!     ▼
+//!   __alltraps  ← 跳板页，两个地址空间里同一个虚拟地址
+//!     │ 保存现场到 TRAP_CONTEXT
+//!     │ csrw satp ← 内核页表        ★ 换地址空间
+//!     ▼
+//!   trap_handler（内核地址空间，跑在本任务的内核栈上）
+//!     │ 分派：系统调用 / 杀进程 / 重新调度
+//!     ▼
+//!   trap_return
+//!     │ stvec ← TRAMPOLINE
+//!     │ jr 跳板页里的 __restore
+//!     ▼
+//!   __restore   ← 还是那一页
+//!     │ csrw satp ← 用户页表        ★ 换回去
+//!     │ 恢复现场
+//!     │ sret
+//!     ▼
+//!   用户程序
+//! ```
 //!
-//! 两者的处理流程完全一样：CPU 跳到 `stvec` 指定的地址，
-//! 我们在那里保存现场、分派处理、恢复现场、返回。
+//! 两次 `csrw satp` 都发生在跳板页上，这是整章设计的支点。
 
 mod context;
 
+use crate::config::{TRAMPOLINE, TRAP_CONTEXT};
 use crate::csr::{
     decode_scause, scause, sepc, sie, sie_bits, stval, stvec, Exception, Interrupt, Trap,
 };
 use crate::syscall::syscall;
-use crate::task::{exit_current_and_run_next, suspend_current_and_run_next};
+use crate::task::{
+    current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next,
+};
 use crate::timer::set_next_trigger;
-use core::arch::global_asm;
+use core::arch::{asm, global_asm};
 
 pub use context::TrapContext;
 
@@ -25,6 +46,7 @@ global_asm!(include_str!("trap.S"));
 
 extern "C" {
     fn __alltraps();
+    fn __restore();
     fn __kernel_trap();
 }
 
@@ -36,40 +58,27 @@ fn set_kernel_trap_entry() {
     }
 }
 
-/// 内核自己触发 trap 时的处理：没有恢复的可能，打印现场后停机。
+/// 把 trap 入口指向跳板页。
 ///
-/// 内核态的 trap 几乎总是编程错误（解引用了空指针、访问了没映射的地址、
-/// 栈溢出冲过了 guard page）。它和用户态的 trap 有本质区别：
-/// 用户程序出错可以杀掉它继续跑，内核出错则说明整个系统的假设已经破了。
-#[no_mangle]
-pub fn kernel_trap_handler() -> ! {
-    let scause = scause::read();
-    panic!(
-        "内核自身触发了 trap：{:?}\n         scause={:#x}  stval={:#x}  sepc={:#x}",
-        decode_scause(scause),
-        scause,
-        stval::read(),
-        sepc::read()
-    );
+/// 注意写的是 [`TRAMPOLINE`] 这个**虚拟地址常量**，而不是 `__alltraps`
+/// 的链接地址。因为用户地址空间里根本没有内核的 `.text` —— 唯一可执行的
+/// 内核代码就是映射在 `TRAMPOLINE` 上的那一页。
+fn set_user_trap_entry() {
+    // SAFETY: 每个地址空间都在 TRAMPOLINE 处映射了 __alltraps 所在的页。
+    unsafe {
+        stvec::write(TRAMPOLINE);
+    }
 }
 
-/// 初始化 trap 处理：告诉 CPU 出事时往哪跳。
+/// 初始化 trap 处理。
 pub fn init() {
-    // SAFETY: __alltraps 是我们自己写的、满足 4 字节对齐的合法 trap 入口。
-    //
-    // stvec 的低 2 位是模式位，0 表示 Direct 模式 —— 所有 trap 都跳到
-    // 同一个入口，由软件自己分派。另一种是 Vectored 模式，按中断号跳到
-    // 不同偏移，对我们没必要。__alltraps 已经 .align 2，低 2 位天然是 0。
     // 先指向内核态入口。启动阶段还没有任何用户程序在跑，
     // 这时出的任何 trap 都是内核自己的问题，应该立刻在第一现场 panic。
-    //
-    // 真正切到 __alltraps 的时机在 `__restore` 开头 —— 所有进入用户态的
-    // 路径都会经过那里。
     set_kernel_trap_entry();
     info!(
-        "trap 入口已设置：内核态 {:#x}，用户态 {:#x}",
+        "trap 入口已设置：内核态 {:#x}，用户态 {:#x}（跳板页）",
         __kernel_trap as *const () as usize,
-        __alltraps as *const () as usize
+        TRAMPOLINE
     );
 }
 
@@ -83,16 +92,7 @@ pub fn init() {
 ///
 /// 而 `sstatus.SIE` 管的是"CPU 正在 S 态执行时是否响应中断"。
 /// 我们刻意保持它为 0，也就是说 —— **内核自身不可抢占**。
-///
-/// 这是一个明确的设计决定，不是偷懒：
-///
-/// - 内核执行期间到达的时钟中断会被挂起（pending），
-///   等 `sret` 回到用户态的那一刻才被送达，一个都不会丢
-/// - 内核里的临界区因此天然是原子的，
-///   [`crate::sync::UPSafeCell`] 的"不被抢占"前提得以保住
-///
-/// 代价是内核里一段长耗时的操作会推迟所有任务的调度。
-/// Linux 在 2.6 之前也是这么做的，后来才引入可抢占内核。
+/// 这正是 [`crate::sync::UPSafeCell`] 赖以成立的前提。
 pub fn enable_timer_interrupt() {
     // SAFETY: 只置位 STIE，不改动 sie 的其他位。
     unsafe {
@@ -104,18 +104,37 @@ pub fn enable_timer_interrupt() {
     );
 }
 
-/// Trap 的 Rust 侧处理入口，由 `__alltraps` 在保存完现场后调用。
+/// 内核自己触发 trap 时的处理：没有恢复的可能，打印现场后停机。
 ///
-/// 返回值仍是那个 `TrapContext` 指针，`__alltraps` 会直接落进 `__restore`
-/// 把它恢复回去。
-///
-/// `#[no_mangle]` 是必须的 —— 汇编里写的是 `call trap_handler`，
-/// 符号名不能被 Rust 改写。
+/// 内核态的 trap 几乎总是编程错误（解引用了空指针、访问了没映射的地址、
+/// 内核栈写穿了 guard page）。它和用户态的 trap 有本质区别：
+/// 用户程序出错可以杀掉它继续跑，内核出错则说明整个系统的假设已经破了。
 #[no_mangle]
-pub fn trap_handler(cx: &mut TrapContext) -> &mut TrapContext {
+pub fn kernel_trap_handler() -> ! {
+    let scause = scause::read();
+    panic!(
+        "内核自身触发了 trap：{:?}\n         scause={:#x}  stval={:#x}  sepc={:#x}",
+        decode_scause(scause),
+        scause,
+        stval::read(),
+        sepc::read()
+    );
+}
+
+/// Trap 的 Rust 侧处理入口。
+///
+/// 由跳板页上的 `__alltraps` 在换好页表之后 `jr` 跳进来 ——
+/// 注意是 `jr` 而不是 `call`：我们不打算原路返回，
+/// 回用户态走的是 [`trap_return`] 那条路。
+///
+/// 和第 3-7 周相比，它不再接收 `&mut TrapContext` 参数：那时 `sp` 正指着
+/// 内核栈上的上下文，直接传地址即可；现在上下文在**用户地址空间**里，
+/// 内核只能通过它的物理页号去访问（[`current_trap_cx`]）。
+#[no_mangle]
+pub fn trap_handler() -> ! {
     // 处理期间 stvec 指向内核态入口：万一内核自己在处理 trap 时又出错，
     // 会走清晰的 panic 路径，而不是被 __alltraps 当成一次用户态 trap
-    // 再折腾一遍（那样只会得到一个指向 __alltraps 内部的假现场）。
+    // 再折腾一遍（那样只会得到一个假现场）。
     set_kernel_trap_entry();
 
     let scause = scause::read();
@@ -124,14 +143,19 @@ pub fn trap_handler(cx: &mut TrapContext) -> &mut TrapContext {
     match decode_scause(scause) {
         // --- 系统调用 ---
         Trap::Exception(Exception::UserEnvCall) => {
+            let cx = current_trap_cx();
             // sepc 指向的是 `ecall` 这条指令本身。如果直接返回，
-            // 会再执行一次 ecall，陷入死循环。所以要手动跳过它。
-            // RISC-V 的 ecall 固定 4 字节。
+            // 会再执行一次 ecall，陷入死循环。RISC-V 的 ecall 固定 4 字节。
             cx.sepc += 4;
+            let (id, args) = (cx.x[17], [cx.x[10], cx.x[11], cx.x[12]]);
 
-            // 系统调用约定：a7 放调用号，a0~a2 放参数，返回值写回 a0
-            let result = syscall(cx.x[17], [cx.x[10], cx.x[11], cx.x[12]]);
-            cx.x[10] = result as usize;
+            let result = syscall(id, args);
+
+            // 重新取一次。`syscall` 里可能发生过任务切换（sys_yield、
+            // 或者被抢占），中间隔了很久 —— 虽然回来之后还是同一个任务、
+            // 同一份上下文，但不重新取的话，上面那个引用就横跨了一次
+            // 可能的地址空间切换，读起来很容易让人误判。
+            current_trap_cx().x[10] = result as usize;
         }
 
         // --- 时钟中断：时间片用完了，换人 ---
@@ -143,7 +167,6 @@ pub fn trap_handler(cx: &mut TrapContext) -> &mut TrapContext {
 
             // 注意这里**不动 sepc**。中断和 `ecall` 不同：被打断的那条
             // 指令还没执行完，任务恢复时要重新执行它。
-            // 只有 `ecall` 这种"已经完成了语义"的异常才需要 +4。
             suspend_current_and_run_next();
         }
 
@@ -153,6 +176,8 @@ pub fn trap_handler(cx: &mut TrapContext) -> &mut TrapContext {
             | Exception::StorePageFault
             | Exception::LoadFault
             | Exception::LoadPageFault
+            | Exception::InstructionFault
+            | Exception::InstructionPageFault
             | Exception::StoreMisaligned
             | Exception::LoadMisaligned),
         ) => {
@@ -160,7 +185,7 @@ pub fn trap_handler(cx: &mut TrapContext) -> &mut TrapContext {
                 "用户程序访存出错：{:?}，地址 {:#x}，指令位于 {:#x} —— 杀掉，换下一个",
                 e,
                 stval,
-                sepc::read()
+                current_trap_cx().sepc
             );
             exit_current_and_run_next();
         }
@@ -170,7 +195,7 @@ pub fn trap_handler(cx: &mut TrapContext) -> &mut TrapContext {
             error!(
                 "用户程序执行了非法指令，指令编码 {:#x}，位于 {:#x} —— 杀掉，换下一个",
                 stval,
-                sepc::read()
+                current_trap_cx().sepc
             );
             exit_current_and_run_next();
         }
@@ -187,5 +212,42 @@ pub fn trap_handler(cx: &mut TrapContext) -> &mut TrapContext {
         }
     }
 
-    cx
+    trap_return()
+}
+
+/// 返回用户态。永不返回。
+///
+/// 这里要做的三件事，每一件都有讲究：
+///
+/// 1. **把 `stvec` 切回跳板页** —— 下一次 trap 才能正确进入
+/// 2. **算出 `__restore` 在跳板页里的虚拟地址** —— 不能直接 `call __restore`，
+///    因为那会跳到它的**链接地址**（内核 `.text` 里），而马上就要换成
+///    用户页表了，那个地址在用户空间里不存在
+/// 3. **用 `jr` 跳过去，参数放 `a0`/`a1`** —— 这是和汇编约定的接口
+#[no_mangle]
+pub fn trap_return() -> ! {
+    set_user_trap_entry();
+
+    let trap_cx_va = TRAP_CONTEXT;
+    let user_satp = current_user_token();
+
+    // 跳板页是整段搬过去的，所以 __restore 相对 __alltraps 的偏移
+    // 在两个地址空间里完全一样。
+    let restore_va =
+        __restore as *const () as usize - __alltraps as *const () as usize + TRAMPOLINE;
+
+    // SAFETY: restore_va 落在跳板页内，而跳板页在当前（内核）地址空间
+    // 和即将切入的用户地址空间里都有映射。a0/a1 是与 trap.S 约定的接口。
+    unsafe {
+        asm!(
+            // 刚刚可能往内存里写过用户程序的代码（装载/exec），
+            // 让取指单元丢弃缓存重新取
+            "fence.i",
+            "jr {restore_va}",
+            restore_va = in(reg) restore_va,
+            in("a0") trap_cx_va,
+            in("a1") user_satp,
+            options(noreturn)
+        );
+    }
 }

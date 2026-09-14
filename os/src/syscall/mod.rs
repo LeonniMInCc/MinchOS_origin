@@ -31,7 +31,7 @@ const SYSCALL_GET_TIME: usize = 169;
 /// 分派一次系统调用。由 [`crate::trap::trap_handler`] 调用。
 pub fn syscall(id: usize, args: [usize; 3]) -> isize {
     match id {
-        SYSCALL_WRITE => sys_write(args[0], args[1] as *const u8, args[2]),
+        SYSCALL_WRITE => sys_write(args[0], args[1], args[2]),
         SYSCALL_EXIT => sys_exit(args[0] as i32),
         SYSCALL_YIELD => sys_yield(),
         SYSCALL_GET_TIME => sys_get_time(),

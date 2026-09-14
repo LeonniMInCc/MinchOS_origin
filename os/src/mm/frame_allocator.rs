@@ -22,7 +22,7 @@
 //! **数据结构的复杂度应该由需求决定，而不是由"我会写什么"决定。**
 
 use super::address::PhysPageNum;
-use crate::config::{app_region_end, MEMORY_END};
+use crate::config::MEMORY_END;
 use crate::sync::UPSafeCell;
 use alloc::vec::Vec;
 
@@ -153,14 +153,13 @@ pub fn init() {
     extern "C" {
         static ekernel: u8;
     }
-    // 起点要同时避开两块已被占用的内存：
-    //   1. 内核镜像本身（`.text` 到 `.bss` 末尾，含 3 MiB 的堆）
-    //   2. 用户程序加载区（本章还没有分页，程序直接躺在固定物理地址上）
+    // 起点是内核镜像的终点（向上取整到页边界）。
     //
-    // 少避开任何一块，分配器都会把别人正在用的内存当成空闲页分出去，
-    // 而症状会在很久以后、很远的地方才浮现。
+    // 第 6–7 周这里还要额外避开"用户程序加载区"，因为那时程序直接躺在
+    // 固定的物理地址上。第 8 周有了地址空间之后，用户程序的每一页都是
+    // 从这个分配器里要的，不再有任何预留区域 —— 这个函数因此变简单了。
     let kernel_end = &raw const ekernel as usize;
-    let start = super::address::PhysAddr::from(kernel_end.max(app_region_end())).ceil();
+    let start = super::address::PhysAddr::from(kernel_end).ceil();
     let end = super::address::PhysAddr::from(MEMORY_END).floor();
 
     FRAME_ALLOCATOR.exclusive_access().init(start, end);

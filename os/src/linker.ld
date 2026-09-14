@@ -22,6 +22,17 @@ SECTIONS
     .text : {
         /* 入口汇编必须是整个内核的第一段代码 */
         *(.text.entry)
+
+        /* 跳板页：`__alltraps` / `__restore` 单独占一整页。
+         *
+         * 它必须能被精确地按页映射到**每一个**地址空间的同一个虚拟地址上
+         * （见 config::TRAMPOLINE），所以前后都要页对齐，中间不能混进
+         * 别的代码 —— 否则映射跳板时会连带把别的函数也暴露出去。 */
+        . = ALIGN(4K);
+        strampoline = .;
+        *(.text.trampoline);
+        . = ALIGN(4K);
+
         *(.text .text.*)
     }
     . = ALIGN(4K);

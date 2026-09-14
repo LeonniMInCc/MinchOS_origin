@@ -28,9 +28,11 @@ pub use address::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 #[allow(unused_imports)]
 pub use frame_allocator::{frame_alloc, FrameTracker};
 #[allow(unused_imports)]
-pub use page_table::{PTEFlags, PageTable, PageTableEntry};
+pub use page_table::{translated_byte_buffer, PTEFlags, PageTable, PageTableEntry};
 #[allow(unused_imports)]
-pub use memory_set::{kernel_token, MapArea, MapPermission, MapType, MemorySet, VPNRange};
+pub use memory_set::{
+    alloc_kernel_stack, kernel_token, MapArea, MapPermission, MapType, MemorySet, VPNRange,
+};
 
 /// 初始化内存管理子系统。
 ///

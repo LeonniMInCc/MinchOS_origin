@@ -146,8 +146,8 @@ pub fn rust_main() -> ! {
     clear_bss();
 
     println!("{}", BANNER);
-    println!("       CCNUOS v0.7.0 — RISC-V 64 (SV39) 教学操作系统");
-    println!("       第七周：地址空间 / 开启分页\n");
+    println!("       CCNUOS v0.8.0 — RISC-V 64 (SV39) 教学操作系统");
+    println!("       第八周：跳板页 / 每进程独立地址空间\n");
 
     info!("内核已进入 S 态，启动栈可用，.bss 已清零");
     print_memory_layout();
@@ -160,7 +160,6 @@ pub fn rust_main() -> ! {
     trap::enable_timer_interrupt();
     timer::set_next_trigger(); // 上好第一次闹钟，之后由 trap_handler 续期
 
-    loader::load_apps();
     task::init();
 
     // 一去不回：__switch 到第一个任务，它会走 __restore 进 U 态。

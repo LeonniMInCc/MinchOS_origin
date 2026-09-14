@@ -59,17 +59,23 @@ impl TaskContext {
 
     /// 构造一个"还没跑过"的任务上下文。
     ///
-    /// `kstack_ptr` 是该任务内核栈上那份 [`TrapContext`] 的地址。
-    /// 当 `__switch` 把它装进 `sp`、把 `ra` 装成 `__restore` 然后 `ret` 时，
-    /// `__restore` 恰好看到 `sp` 指向一份完整的 trap 现场，
-    /// 于是把它恢复出去 —— 用户程序就跑起来了。
-    pub fn goto_restore(kstack_ptr: usize) -> Self {
+    /// `kernel_sp` 是该任务在**内核地址空间**里的内核栈顶。
+    ///
+    /// 第 8 周之前，`ra` 直接指向 `__restore`，`sp` 指向内核栈上那份
+    /// `TrapContext`。现在两者都变了：
+    ///
+    /// - `TrapContext` 搬到了用户地址空间的固定虚拟地址上，内核栈上不再有它
+    /// - 回用户态要先换页表，所以得先经过 Rust 写的 `trap_return`，
+    ///   由它算出跳板页里 `__restore` 的虚拟地址再跳过去
+    ///
+    /// 于是 `__switch` 的 `ret` 落到 `trap_return`，栈是干净的内核栈顶。
+    pub fn goto_trap_return(kernel_sp: usize) -> Self {
         extern "C" {
-            fn __restore();
+            fn trap_return();
         }
         Self {
-            ra: __restore as *const () as usize,
-            sp: kstack_ptr,
+            ra: trap_return as *const () as usize,
+            sp: kernel_sp,
             s: [0; 12],
         }
     }

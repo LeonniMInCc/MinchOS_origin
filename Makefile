@@ -14,11 +14,14 @@ OS_DIR          := os
 KERNEL_ELF      := $(OS_DIR)/target/$(TARGET)/$(MODE)/os
 KERNEL_BIN      := $(KERNEL_ELF).bin
 
-# 用户程序是一个独立的 crate，链接到 0x80400000。
-# 编译产物被 build.rs 用 .incbin 嵌进内核镜像，所以必须先于内核构建。
+# 用户程序是一个独立的 crate。编译产物（stripped ELF）被 os/build.rs
+# 用 .incbin 嵌进内核镜像，所以必须先于内核构建。
 USER_DIR        := user
 USER_OUT        := $(USER_DIR)/target/$(TARGET)/release
 USER_NAMES      := $(basename $(notdir $(wildcard $(USER_DIR)/src/bin/*.rs)))
+# 所有用户程序都链接到这个虚拟地址（见 user/src/linker.ld）。
+# 构建后会核对每个 ELF 的入口是否真是它 —— 详见 user 目标。
+USER_ENTRY_EXPECTED := 0x0000000000010000
 
 # OpenSBI 固件加载在 0x80000000，初始化完成后跳转到这里。
 # 这个地址必须和 os/src/linker.ld 里的 BASE_ADDRESS 完全一致。
@@ -56,7 +59,7 @@ QEMU_ARGS  := -machine virt \
 DEMO_LOG   := docs/demo.log
 DEMO_HTML  := docs/demo.html
 
-.PHONY: all build run debug gdb clean fmt clippy asm env check demo user
+.PHONY: all build run debug gdb clean clean-user fmt clippy asm env check demo user
 
 all: build
 
@@ -66,13 +69,30 @@ env:
 	@command -v $(QEMU) >/dev/null || { echo "找不到 $(QEMU)：请先 brew install qemu"; exit 1; }
 	@test -n "$(OBJCOPY)" || { echo "找不到 llvm-objcopy：请先 rustup component add llvm-tools"; exit 1; }
 
-# 先编译用户程序，再剥成裸二进制 —— 内核的 build.rs 会用 .incbin
-# 把这些 .bin 嵌进自己的 .data 段。本章还没有文件系统，
-# 这是内核携带用户程序的唯一办法。
-# 每个程序要链接到不同的基址（本章没有分页，它们同时躺在物理内存里），
-# 所以必须逐个编译。详见 tools/build-user.py。
+# 第 8 周起所有用户程序链接到同一个地址（各自有独立地址空间），
+# 所以一条 cargo build 就够了 —— 之前那个逐个改基址的 Python 脚本
+# 随着跳板页的引入退休了。
+#
+# objcopy --strip-all 保留 ELF 格式（不加 -O binary），只去掉符号表：
+# 内核需要程序头表才知道每段该映射到哪、该给什么权限。
 user: env
-	@python3 tools/build-user.py
+	@cd $(USER_DIR) && $(CARGO) build --release
+	@for app in $(USER_NAMES); do \
+		$(OBJCOPY) --strip-all $(USER_OUT)/$$app $(USER_OUT)/$$app.elf; \
+		entry=$$($(OBJDUMP) -f $(USER_OUT)/$$app.elf | awk '/start address/ {print $$3}'); \
+		if [ "$$entry" != "$(USER_ENTRY_EXPECTED)" ]; then \
+			echo "✗ $$app 的入口是 $$entry，应该是 $(USER_ENTRY_EXPECTED)"; \
+			echo "  cargo 不把链接脚本当作构建输入，很可能复用了旧产物。"; \
+			echo "  执行 make clean-user 后重试。"; \
+			exit 1; \
+		fi; \
+	done
+	@echo "用户程序: $(USER_NAMES)（入口均为 $(USER_ENTRY_EXPECTED)）"
+
+# 只清理用户程序。链接脚本改了而 cargo 没察觉时用。
+clean-user:
+	@cd $(USER_DIR) && $(CARGO) clean
+	@echo "已清理用户程序构建缓存"
 
 # 注意：必须 cd 进 os/ 再调 cargo。cargo 是按"当前工作目录"向上查找
 # .cargo/config.toml 的，用 --manifest-path 的话 os/.cargo/config.toml

@@ -1,42 +1,46 @@
 //! 地址空间。
 //!
-//! 前六章里，"地址"只有一种含义：物理地址。从这一章起，内核和用户程序
-//! 看到的地址都要经过页表翻译 —— 同一个虚拟地址在不同的地址空间里
-//! 可以指向完全不同的物理内存。
+//! 第 7 章建了**一个**恒等映射的内核地址空间，内核和用户共用它。
+//! 第 8 章起，**每个进程都有自己的地址空间**，内核也有自己的 ——
+//! 这才是真正的内存隔离。
 //!
-//! # 本章的策略：先让语义完全不变
-//!
-//! 开启分页是个一步到位就很容易翻车的改动。所以这一章刻意保守：
-//! **建立一个把所有物理内存恒等映射（虚拟地址 = 物理地址）的内核地址空间**，
-//! 然后打开分页。系统的行为应该和第 6 章一模一样 —— 只是所有访存
-//! 都多走了一趟 MMU。
-//!
-//! 这样做有两个好处：
-//!
-//! 1. 出了问题，一定是在"开启分页"这件事本身上，而不是混在别的改动里
-//! 2. 即便如此，我们**已经拿到了真正的硬件保护**：内核的页不带 `U` 位，
-//!    用户程序碰它会被 MMU 挡下来。第 6 章之前这是做不到的
-//!
-//! 第 8 章才会给每个进程建独立的地址空间，那时才需要跳板页。
-//!
-//! # 本章之后的物理内存布局
+//! # 一个用户地址空间长什么样
 //!
 //! ```text
-//!   0x80200000  内核镜像 (.text/.rodata/.data/.bss，含内核堆与内核栈)
-//!   0x80800000  用户程序槽位  16 × 128 KiB          ← 带 U 位
-//!   0x80a00000  用户栈        16 × 8 KiB            ← 带 U 位
-//!   0x80a20000  空闲物理页帧
-//!   0x88000000  内存终点
+//!   0x00010000  ELF 各段    代码 R-X U / 只读 R-- U / 数据 RW- U
+//!               ...
+//!               [guard page]           ← 不映射，栈写穿立刻缺页
+//!               用户栈       RW- U
+//!               ...
+//!   ...FFFE000  TrapContext  RW-       ← 没有 U！只有内核碰它
+//!   ...FFFF000  跳板页       R-X       ← 没有 U！两个空间同一个地址
 //! ```
+//!
+//! # 内核地址空间
+//!
+//! ```text
+//!   0x80200000  .text        R-X       ← 内核代码不可写
+//!               .rodata      R--
+//!               .data/.bss   RW-       ← 数据段不可执行
+//!               可用物理内存  RW-       ← 恒等映射，内核靠它读写任意物理页
+//!               ...
+//!               任务 N 内核栈 RW-  ┐
+//!               [guard page]      ├ 从跳板页往下依次排布
+//!               任务 0 内核栈 RW-  ┘
+//!   ...FFFF000  跳板页       R-X       ← 和每个用户空间同一个地址
+//! ```
+//!
+//! 注意两个空间里都没有任何一页是既可写又可执行的，
+//! 也没有任何一页是内核和用户都能访问的（跳板页不带 `U`）。
 
-use super::address::{PhysPageNum, VirtAddr, VirtPageNum};
+use super::address::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
+use super::elf::{flags_str, ElfFile, PF_R, PF_W, PF_X, PT_LOAD};
 use super::frame_allocator::{frame_alloc, FrameTracker};
 use super::page_table::{PTEFlags, PageTable, PageTableEntry};
 use crate::config::{
-    app_region_end, user_stack_region_end, APP_BASE_ADDRESS, MEMORY_END, PAGE_SIZE,
-    USER_STACK_BASE,
+    kernel_stack_position, MEMORY_END, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE,
 };
-use crate::csr::{satp, sstatus, sstatus_bits};
+use crate::csr::satp;
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -308,12 +312,8 @@ impl MemorySet {
         }
 
         let mut set = Self::new_bare();
-        let (r, w, x, u) = (
-            MapPermission::R,
-            MapPermission::W,
-            MapPermission::X,
-            MapPermission::U,
-        );
+        // 内核空间里**没有任何一页带 U** —— 这正是隔离的意义所在
+        let (r, w, x) = (MapPermission::R, MapPermission::W, MapPermission::X);
 
         let mut add = |name: &str, start: usize, end: usize, perm: MapPermission| {
             if start >= end {
@@ -335,12 +335,136 @@ impl MemorySet {
         // 注意用 sbss_with_stack 而不是 sbss：启动栈也在 .bss 里，
         // 不映射它的话，开启分页后第一次压栈就会缺页
         add(".bss+stack", sym!(sbss_with_stack), sym!(ebss), r | w);
-        add("空洞", sym!(ekernel), APP_BASE_ADDRESS, r | w);
-        add("用户程序区", APP_BASE_ADDRESS, app_region_end(), r | w | x | u);
-        add("用户栈区", USER_STACK_BASE, user_stack_region_end(), r | w | u);
-        add("空闲页帧", user_stack_region_end(), MEMORY_END, r | w);
+        // 剩下的全部物理内存。内核必须能读写它分出去的任何一页 ——
+        // 比如往用户进程的页帧里装载程序、读用户传来的缓冲区。
+        add("可用物理内存", sym!(ekernel), MEMORY_END, r | w);
+
+        // 跳板页。内核地址空间也要映射它：trap_return 里那条
+        // `jr restore_va` 是在内核地址空间里执行的。
+        set.map_trampoline();
 
         set
+    }
+
+    /// 把跳板页映射到 [`TRAMPOLINE`]。
+    ///
+    /// **每一个**地址空间都必须调用它 —— 内核的和每个进程的。
+    /// 这是整章设计的支点：换页表的那段代码在切换前后位于同一个虚拟地址。
+    ///
+    /// 注意它直接操作 `page_table` 而不走 [`MemorySet::push`]：
+    /// 跳板页指向的物理页是内核 `.text` 的一部分，不是从页帧分配器要来的，
+    /// 所以不该被任何 [`MapArea`] "拥有" —— 否则进程退出时会把内核代码
+    /// 所在的物理页"归还"给分配器。
+    ///
+    /// 权限是 `R | X`，**没有 `U`**：这段代码运行在 S 态。
+    /// 给了 `U` 的话，用户程序就能直接跳进 `__restore` 自己切页表了。
+    fn map_trampoline(&mut self) {
+        extern "C" {
+            static strampoline: u8;
+        }
+        self.page_table.map(
+            VirtAddr::from(TRAMPOLINE).floor(),
+            PhysAddr::from(&raw const strampoline as usize).floor(),
+            PTEFlags::R | PTEFlags::X,
+        );
+    }
+
+    /// 从一个 ELF 文件构造用户地址空间。
+    ///
+    /// 返回 `(地址空间, 用户栈顶, 入口地址)`。
+    ///
+    /// 布局（从低到高）：
+    ///
+    /// ```text
+    ///   0x10000      ELF 各段（代码 R-X U、只读数据 R-- U、数据 RW- U）
+    ///   ...
+    ///   [guard page]  ← 不映射，栈写穿就缺页
+    ///   用户栈        RW- U
+    ///   ...
+    ///   TRAP_CONTEXT  RW-   ← 没有 U！只有内核碰它
+    ///   TRAMPOLINE    R-X   ← 没有 U！
+    /// ```
+    pub fn from_elf(elf_data: &[u8]) -> (Self, usize, usize) {
+        let mut set = Self::new_bare();
+        set.map_trampoline();
+
+        let elf = ElfFile::parse(elf_data).expect("用户程序不是合法的 ELF");
+        let (r, w, x, u) = (
+            MapPermission::R,
+            MapPermission::W,
+            MapPermission::X,
+            MapPermission::U,
+        );
+
+        let mut max_end = VirtAddr::from(0usize);
+        for ph in elf.program_headers().filter(|p| p.p_type == PT_LOAD) {
+            // 段的权限直接来自 ELF —— 这是第 7 章解析程序头的回报：
+            // 代码段拿不到写权限，数据段拿不到执行权限。
+            let mut perm = u;
+            if ph.flags & PF_R != 0 {
+                perm = perm | r;
+            }
+            if ph.flags & PF_W != 0 {
+                perm = perm | w;
+            }
+            if ph.flags & PF_X != 0 {
+                perm = perm | x;
+            }
+
+            let start_va = VirtAddr::from(ph.vaddr);
+            let end_va = VirtAddr::from(ph.vaddr + ph.memsz);
+            let area = MapArea::new(start_va, end_va, MapType::Framed, perm);
+            max_end = VirtAddr::from(area.range().end);
+
+            let [fr, fw, fx] = flags_str(ph.flags);
+            debug!(
+                "    段 {}{}{}  [{:#x}, {:#x})  {} 页",
+                fr,
+                fw,
+                fx,
+                ph.vaddr,
+                ph.vaddr + ph.memsz,
+                area.range().len()
+            );
+
+            // memsz 比 filesz 大的那部分是 .bss，新分配的页帧本来就是
+            // 全 0（见 FrameTracker::new），所以不用额外处理
+            set.push(area, elf.segment_data(&ph));
+        }
+
+        // 用户栈：和程序段之间隔一页 guard page
+        let stack_bottom = max_end.0 + PAGE_SIZE;
+        let stack_top = stack_bottom + USER_STACK_SIZE;
+        set.insert_framed_area(stack_bottom.into(), stack_top.into(), r | w | u);
+
+        // TrapContext 页。**不给 U** —— 它是内核用来保存/恢复这个进程现场的
+        // 地方，进程自己碰不得。给了 U 的话，用户程序就能改写自己的
+        // sepc/sstatus，等于可以任意跳转、甚至提权。
+        set.push(
+            MapArea::new(
+                TRAP_CONTEXT.into(),
+                TRAMPOLINE.into(),
+                MapType::Framed,
+                r | w,
+            ),
+            None,
+        );
+
+        (set, stack_top, elf.entry())
+    }
+
+    /// 在**内核地址空间**里给第 `app_id` 个任务分配内核栈，返回栈顶。
+    ///
+    /// 相邻两个栈之间天然隔着一页不映射的空隙（见
+    /// [`crate::config::kernel_stack_position`]），那就是 guard page。
+    pub fn map_kernel_stack(&mut self, app_id: usize) -> usize {
+        let (bottom, top) = kernel_stack_position(app_id);
+        self.insert_framed_area(
+            bottom.into(),
+            top.into(),
+            MapPermission::R | MapPermission::W,
+        );
+        top
     }
 
     /// 让这个地址空间生效。
@@ -392,30 +516,30 @@ pub fn init_kernel_space() {
         KERNEL_SPACE.exclusive_access().as_ref().unwrap().activate();
     }
 
-    // 允许 S 态访问带 U 位的页。
+    // 注意这里**没有**打开 sstatus.SUM。
     //
-    // 本章内核和用户**共用一个地址空间**，用户程序区和用户栈区都带 U 位，
-    // 而内核要往里装载程序、要读用户传来的系统调用缓冲区 —— 不开 SUM
-    // 的话，第一次装载就会 StorePageFault。
-    //
-    // 代价是失去了一层保护：内核不小心解引用用户指针不再会被硬件拦下。
-    // 第 8 章给每个进程建独立地址空间后，内核改用手动查页表访问用户内存，
-    // 这一位就能关掉。
-    //
-    // SAFETY: 只置位 SUM，不改动 sstatus 的其他位。
-    unsafe {
-        sstatus::write(sstatus::read() | sstatus_bits::SUM);
-    }
-
-    // 能打印出这一行，就说明分页已经开启且内核活着 —— 本章的验收标准。
+    // 第 7 章内核和用户共用一个地址空间，内核要碰带 U 位的页，不得不开它。
+    // 现在两者的地址空间彻底分开了，内核访问用户内存改走
+    // `translated_byte_buffer`（手动查用户页表 + 恒等映射），
+    // 于是 SUM 可以保持关闭 —— 内核不小心解引用一个用户指针时，
+    // 硬件会立刻拦下来。第 7 章欠的那笔账在这里还清了。
     info!(
-        "分页已开启：satp = {:#x}，{} 个逻辑段，页表自身占 {} 页（已开 SUM）",
+        "分页已开启：satp = {:#x}，{} 个逻辑段，页表自身占 {} 页（SUM 保持关闭）",
         token, areas, frames
     );
 }
 
-/// 内核地址空间的 satp 值。第 8 章从用户态陷入内核时要用它切回来。
-#[allow(dead_code)]
+/// 在内核地址空间里给第 `app_id` 个任务分配内核栈，返回栈顶（虚拟地址）。
+pub fn alloc_kernel_stack(app_id: usize) -> usize {
+    KERNEL_SPACE
+        .exclusive_access()
+        .as_mut()
+        .expect("内核地址空间还没建立")
+        .map_kernel_stack(app_id)
+}
+
+/// 内核地址空间的 `satp`。每个进程的 TrapContext 里都存着它的副本，
+/// `__alltraps` 靠它从用户页表切回内核页表。
 pub fn kernel_token() -> usize {
     KERNEL_SPACE
         .exclusive_access()
