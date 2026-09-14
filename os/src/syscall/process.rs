@@ -4,6 +4,7 @@
 //! 变成僵尸等待被 wait"。现在它只是把任务标记成已退出然后换人。
 
 use crate::task::{current_task_id, exit_current_and_run_next, suspend_current_and_run_next};
+use crate::timer::get_time_ms;
 
 /// `exit(code)` —— 当前任务主动退出。永不返回。
 pub fn sys_exit(exit_code: i32) -> ! {
@@ -29,4 +30,16 @@ pub fn sys_exit(exit_code: i32) -> ! {
 pub fn sys_yield() -> isize {
     suspend_current_and_run_next();
     0
+}
+
+/// `get_time()` —— 返回开机以来的毫秒数。
+///
+/// 用户程序自己读不到 `time` CSR：那是 S 态才能访问的寄存器，
+/// U 态执行 `csrr` 会触发非法指令异常。所以时间也得向内核要。
+///
+/// 有了它，用户程序就能测量自己"实际占用了多久 CPU" ——
+/// 在抢占式调度下，这个数字会明显大于它自己的计算量，
+/// 差额就是被别的任务占走的时间。
+pub fn sys_get_time() -> isize {
+    get_time_ms() as isize
 }

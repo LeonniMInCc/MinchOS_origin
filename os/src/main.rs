@@ -42,6 +42,7 @@ mod sbi;
 mod sync;
 mod syscall;
 mod task;
+mod timer;
 mod trap;
 
 // 把入口汇编整段嵌进来，让它参与链接
@@ -145,8 +146,8 @@ pub fn rust_main() -> ! {
     clear_bss();
 
     println!("{}", BANNER);
-    println!("       CCNUOS v0.4.0 — RISC-V 64 (SV39) 教学操作系统");
-    println!("       第四周：多道程序 / 任务切换 / 协作式调度\n");
+    println!("       CCNUOS v0.5.0 — RISC-V 64 (SV39) 教学操作系统");
+    println!("       第五周：时钟中断 / 时间片轮转 / 抢占式调度\n");
 
     info!("内核已进入 S 态，启动栈可用，.bss 已清零");
     print_memory_layout();
@@ -155,6 +156,9 @@ pub fn rust_main() -> ! {
     mm::heap_test();
 
     trap::init();
+    trap::enable_timer_interrupt();
+    timer::set_next_trigger(); // 上好第一次闹钟，之后由 trap_handler 续期
+
     loader::load_apps();
     task::init();
 

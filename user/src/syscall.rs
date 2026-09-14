@@ -10,6 +10,7 @@ use core::arch::asm;
 const SYSCALL_WRITE: usize = 64;
 const SYSCALL_EXIT: usize = 93;
 const SYSCALL_YIELD: usize = 124;
+const SYSCALL_GET_TIME: usize = 169;
 
 /// 执行一次系统调用。
 ///
@@ -52,6 +53,14 @@ pub fn sys_write_raw(fd: usize, ptr: usize, len: usize) -> isize {
 /// 实际上中间可能已经跑过了好几个别的程序。
 pub fn sys_yield() -> isize {
     syscall(SYSCALL_YIELD, [0, 0, 0])
+}
+
+/// 返回开机以来的毫秒数。
+///
+/// 用户程序读不到 `time` CSR —— 那是 S 态寄存器，U 态执行 `csrr`
+/// 会触发非法指令异常。时间也得向内核要。
+pub fn sys_get_time() -> isize {
+    syscall(SYSCALL_GET_TIME, [0, 0, 0])
 }
 
 /// 退出当前程序。永不返回。

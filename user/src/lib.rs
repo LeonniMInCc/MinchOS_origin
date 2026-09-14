@@ -27,11 +27,16 @@ pub mod console;
 mod lang_items;
 pub mod syscall;
 
-pub use syscall::{sys_exit, sys_write, sys_write_raw, sys_yield};
+pub use syscall::{sys_exit, sys_get_time, sys_write, sys_write_raw, sys_yield};
 
 /// 主动让出 CPU，让别的程序跑一会儿。
 pub fn yield_now() {
     sys_yield();
+}
+
+/// 开机以来的毫秒数。
+pub fn get_time_ms() -> usize {
+    sys_get_time() as usize
 }
 
 /// 用户程序的真正入口。

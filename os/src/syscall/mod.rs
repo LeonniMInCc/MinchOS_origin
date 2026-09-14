@@ -21,11 +21,12 @@ mod fs;
 mod process;
 
 use fs::sys_write;
-use process::{sys_exit, sys_yield};
+use process::{sys_exit, sys_get_time, sys_yield};
 
 const SYSCALL_WRITE: usize = 64;
 const SYSCALL_EXIT: usize = 93;
 const SYSCALL_YIELD: usize = 124;
+const SYSCALL_GET_TIME: usize = 169;
 
 /// 分派一次系统调用。由 [`crate::trap::trap_handler`] 调用。
 pub fn syscall(id: usize, args: [usize; 3]) -> isize {
@@ -33,6 +34,7 @@ pub fn syscall(id: usize, args: [usize; 3]) -> isize {
         SYSCALL_WRITE => sys_write(args[0], args[1] as *const u8, args[2]),
         SYSCALL_EXIT => sys_exit(args[0] as i32),
         SYSCALL_YIELD => sys_yield(),
+        SYSCALL_GET_TIME => sys_get_time(),
         _ => {
             // 用户程序请求了一个不存在的服务。
             // 这不该让内核崩溃 —— 返回错误码，让用户程序自己处理。

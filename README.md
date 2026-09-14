@@ -13,7 +13,8 @@
 | ✅ 第 2 周 (`v0.2`) | 伙伴系统堆分配器，`Box`/`Vec`/`String`/`BTreeMap` 可用 |
 | ✅ 第 3 周 (`v0.3`) | 特权级切换、Trap 处理、系统调用、批处理运行 5 个用户程序 |
 | ✅ 第 4 周 (`v0.4`) | 多道程序、`__switch` 任务切换、`sys_yield` 协作式轮转 |
-| ⬜ 第 5 周 | 时钟中断、时间片轮转、抢占式调度 |
+| ✅ 第 5 周 (`v0.5`) | 时钟中断、时间片轮转、抢占式调度 —— **阶段 I 完成** |
+| ⬜ 第 6 周 | 物理页帧分配器、SV39 多级页表 |
 
 完整计划见 [ROADMAP.md](ROADMAP.md)。
 
@@ -74,6 +75,7 @@ ccnuos/
         ├── sync.rs         UPSafeCell：单核下的内部可变性
         ├── csr.rs          RISC-V 控制状态寄存器访问
         ├── loader.rs       把全部用户程序装入各自槽位
+        ├── timer.rs        时钟：time CSR + SBI set_timer，10 ms 时间片
         ├── mm/
         │   └── heap_allocator.rs   伙伴系统分配器 + #[global_allocator]
         ├── trap/
@@ -87,7 +89,7 @@ ccnuos/
 
 user/                     用户程序（独立 crate）
 ├── src/lib.rs            最小运行库：_start、clear_bss、println!
-└── src/bin/              8 个用户程序，含 3 个故意作恶的
+└── src/bin/              10 个用户程序，含 3 个故意作恶的
 
 tools/build-user.py       逐个编译用户程序，每个链接到不同基址
                           （没有分页的代价，第 7 周后可退休）

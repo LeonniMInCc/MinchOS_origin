@@ -25,6 +25,8 @@ const EID_LEGACY_CONSOLE_PUTCHAR: usize = 0x01;
 const EID_LEGACY_SHUTDOWN: usize = 0x08;
 /// SRST 扩展 ("SRST" 的 ASCII)：系统复位/关机。
 const EID_SRST: usize = 0x5352_5354;
+/// TIME 扩展 ("TIME" 的 ASCII)：设置时钟中断的触发时刻。
+const EID_TIME: usize = 0x5449_4D45;
 
 /// 执行一次 SBI 调用，返回 `(error, value)`。
 ///
@@ -53,6 +55,17 @@ fn sbi_call(eid: usize, fid: usize, arg0: usize, arg1: usize, arg2: usize) -> (u
 /// 这是 CCNUOS 在实现自己的串口驱动之前，唯一的输出手段。
 pub fn console_putchar(c: usize) {
     sbi_call(EID_LEGACY_CONSOLE_PUTCHAR, 0, c, 0, 0);
+}
+
+/// 设定下一次时钟中断的触发时刻（以 `time` 计数器的绝对值表示）。
+///
+/// 为什么要求固件代劳？定时器比较寄存器 `mtimecmp` 是 M 态资源，
+/// S 态的内核碰不到 —— 只能通过 SBI 请 OpenSBI 去写。
+///
+/// 注意这是**一次性**的：闹钟响过就没了。所以每次处理完时钟中断，
+/// 必须立刻再设下一次，否则时间片轮转就此停摆。
+pub fn set_timer(stime_value: usize) {
+    sbi_call(EID_TIME, 0, stime_value, 0, 0);
 }
 
 /// 关机。`failure` 为真时告诉固件这是一次异常退出。

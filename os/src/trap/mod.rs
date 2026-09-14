@@ -11,9 +11,12 @@
 
 mod context;
 
-use crate::csr::{decode_scause, scause, sepc, stval, stvec, Exception, Trap};
+use crate::csr::{
+    decode_scause, scause, sepc, sie, sie_bits, stval, stvec, Exception, Interrupt, Trap,
+};
 use crate::syscall::syscall;
-use crate::task::exit_current_and_run_next;
+use crate::task::{exit_current_and_run_next, suspend_current_and_run_next};
+use crate::timer::set_next_trigger;
 use core::arch::global_asm;
 
 pub use context::TrapContext;
@@ -36,6 +39,37 @@ pub fn init() {
         stvec::write(entry);
     }
     info!("trap 入口已设置：stvec = {:#x}", entry);
+}
+
+/// 打开时钟中断。
+///
+/// # 只开 `sie.STIE`，不碰 `sstatus.SIE`
+///
+/// 按 RISC-V 特权级规范：CPU 运行在**更低**特权级（U 态）时，
+/// S 态中断是**永远开启**的，和 `sstatus.SIE` 无关。所以只要打开
+/// `sie.STIE`，用户程序就能被时钟中断抢占。
+///
+/// 而 `sstatus.SIE` 管的是"CPU 正在 S 态执行时是否响应中断"。
+/// 我们刻意保持它为 0，也就是说 —— **内核自身不可抢占**。
+///
+/// 这是一个明确的设计决定，不是偷懒：
+///
+/// - 内核执行期间到达的时钟中断会被挂起（pending），
+///   等 `sret` 回到用户态的那一刻才被送达，一个都不会丢
+/// - 内核里的临界区因此天然是原子的，
+///   [`crate::sync::UPSafeCell`] 的"不被抢占"前提得以保住
+///
+/// 代价是内核里一段长耗时的操作会推迟所有任务的调度。
+/// Linux 在 2.6 之前也是这么做的，后来才引入可抢占内核。
+pub fn enable_timer_interrupt() {
+    // SAFETY: 只置位 STIE，不改动 sie 的其他位。
+    unsafe {
+        sie::write(sie::read() | sie_bits::STIE);
+    }
+    info!(
+        "时钟中断已开启：时间片 {} ms（内核自身不可抢占）",
+        crate::timer::slice_ms()
+    );
 }
 
 /// Trap 的 Rust 侧处理入口，由 `__alltraps` 在保存完现场后调用。
@@ -61,6 +95,19 @@ pub fn trap_handler(cx: &mut TrapContext) -> &mut TrapContext {
             // 系统调用约定：a7 放调用号，a0~a2 放参数，返回值写回 a0
             let result = syscall(cx.x[17], [cx.x[10], cx.x[11], cx.x[12]]);
             cx.x[10] = result as usize;
+        }
+
+        // --- 时钟中断：时间片用完了，换人 ---
+        Trap::Interrupt(Interrupt::SupervisorTimer) => {
+            // 必须先把下一次闹钟设上。SBI 的定时器是一次性的，
+            // 而 suspend_current_and_run_next 会把执行流切走 ——
+            // 忘了重设，抢占就只会发生一次。
+            set_next_trigger();
+
+            // 注意这里**不动 sepc**。中断和 `ecall` 不同：被打断的那条
+            // 指令还没执行完，任务恢复时要重新执行它。
+            // 只有 `ecall` 这种"已经完成了语义"的异常才需要 +4。
+            suspend_current_and_run_next();
         }
 
         // --- 访存错误：用户程序碰了不该碰的地址 ---

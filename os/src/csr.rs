@@ -82,6 +82,17 @@ define_csr!(
     /// 暂存寄存器。`__alltraps` 用它在用户栈和内核栈之间倒腾。
     sscratch
 );
+define_csr!(
+    /// 中断使能位图。见 [`sie_bits`]。
+    sie
+);
+define_csr!(
+    /// 只读的计数器，每个时钟周期加一。QEMU virt 上频率是 10 MHz。
+    ///
+    /// 它是我们唯一的时间来源 —— 内核靠它算时间片，用户程序靠
+    /// `sys_get_time` 间接读它。
+    time
+);
 
 /// `sstatus` 里我们关心的几个位。
 pub mod sstatus_bits {
@@ -97,9 +108,29 @@ pub mod sstatus_bits {
     /// Supervisor Previous Interrupt Enable：`sret` 之后 `SIE` 恢复成什么。
     pub const SPIE: usize = 1 << 5;
 
-    /// Supervisor Interrupt Enable：S 态是否响应中断。第 5 周才会用到。
+    /// Supervisor Interrupt Enable：**S 态自身**是否响应中断。
+    ///
+    /// 注意这一位管的只是"CPU 正在 S 态执行时"。按 RISC-V 特权级规范，
+    /// 当 CPU 运行在**更低**的特权级（U 态）时，S 态中断是**永远开启**的，
+    /// 与这一位无关。
+    ///
+    /// 所以第 5 周要实现抢占用户程序，只需要打开 [`sie_bits::STIE`]，
+    /// **不需要**也**不应该**设置这一位 —— 保持它为 0，内核自身就是
+    /// 不可抢占的，这正是 [`crate::sync::UPSafeCell`] 赖以成立的前提。
     #[allow(dead_code)]
     pub const SIE: usize = 1 << 1;
+}
+
+/// `sie`（中断使能）里我们关心的几个位。
+pub mod sie_bits {
+    /// Supervisor Software Interrupt Enable
+    #[allow(dead_code)]
+    pub const SSIE: usize = 1 << 1;
+    /// Supervisor **Timer** Interrupt Enable —— 第 5 周的主角
+    pub const STIE: usize = 1 << 5;
+    /// Supervisor External Interrupt Enable（外设中断，本项目用不到）
+    #[allow(dead_code)]
+    pub const SEIE: usize = 1 << 9;
 }
 
 // ---------------------------------------------------------------------------
