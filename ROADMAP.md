@@ -14,9 +14,10 @@
       链接脚本定内存布局，`entry.asm` 支栈，SBI 串口输出，`println!`，分级日志，panic handler
       *验收*：QEMU 打出 banner 与内存布局表，内核主动关机
 
-- [ ] **第 2 周 · 内核堆**　`v0.2`　10 h
-      手写 buddy 分配器，接上 `#[global_allocator]`，`ekernel` 之后的物理内存划为堆
-      *验收*：内核里能用 `Vec` / `String` / `BTreeMap`，反复分配释放无泄漏
+- [x] **第 2 周 · 内核堆**　`v0.2`　10 h
+      手写伙伴系统分配器（侵入式空闲链表，零元数据开销），接上 `#[global_allocator]`，
+      引入 `UPSafeCell`
+      *验收*：内核里能用 `Box`/`Vec`/`String`/`BTreeMap`，反复分配释放后用量精确归零
 
 - [ ] **第 3 周 · 特权级切换**　`v0.3`　16 h　⚠️ 第一个坎
       `TrapContext`，手写 `__alltraps` / `__restore`，`stvec`，`sys_write` / `sys_exit`，用户程序链进内核

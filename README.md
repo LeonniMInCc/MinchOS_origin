@@ -10,7 +10,7 @@
 | 进度 | 内容 |
 |---|---|
 | ✅ 第 1 周 (`v0.1`) | 裸机启动、SBI 串口输出、分级日志、内存布局自省 |
-| ⬜ 第 2 周 | 内核堆分配器，`Vec` / `String` 可用 |
+| ✅ 第 2 周 (`v0.2`) | 伙伴系统堆分配器，`Box`/`Vec`/`String`/`BTreeMap` 可用 |
 | ⬜ 第 3 周 | 特权级切换、Trap 处理、第一个用户程序 |
 
 完整计划见 [ROADMAP.md](ROADMAP.md)。
@@ -57,11 +57,15 @@ ccnuos/
     └── src/
         ├── linker.ld       内存布局，把内核钉在 0x80200000
         ├── entry.asm       入口：支起启动栈，跳进 Rust
-        ├── main.rs         rust_main：清 .bss、打印布局、关机
+        ├── main.rs         rust_main：清 .bss、初始化、自检、关机
+        ├── config.rs       内核可调参数
         ├── sbi.rs          SBI 调用（ecall）封装
         ├── console.rs      print! / println!
         ├── logging.rs      分级彩色日志
-        └── lang_items.rs   panic handler
+        ├── lang_items.rs   panic handler
+        ├── sync.rs         UPSafeCell：单核下的内部可变性
+        └── mm/
+            └── heap_allocator.rs   伙伴系统分配器 + #[global_allocator]
 ```
 
 ## 设计取舍

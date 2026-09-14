@@ -21,14 +21,23 @@
 #![no_std] // 不链接标准库：std 依赖操作系统，而我们就是操作系统
 #![no_main] // 不要 Rust 的 main 入口：启动流程由 entry.asm 接管
 
+// `alloc` 是 core 与 std 之间的那一层：提供 Box/Vec/String/BTreeMap，
+// 但不假定操作系统存在 —— 只要求你提供一个 #[global_allocator]。
+// 第 2 周做的正是这件事，见 mm::heap_allocator。
+extern crate alloc;
+
 use core::arch::global_asm;
 
+// console 和 logging 导出宏，必须排在使用它们的模块之前
 #[macro_use]
 mod console;
 #[macro_use]
 mod logging;
+mod config;
 mod lang_items;
+mod mm;
 mod sbi;
+mod sync;
 
 // 把入口汇编整段嵌进来，让它参与链接
 global_asm!(include_str!("entry.asm"));
@@ -129,17 +138,15 @@ pub fn rust_main() -> ! {
     clear_bss();
 
     println!("{}", BANNER);
-    println!("       CCNUOS v0.1.0 — RISC-V 64 (SV39) 教学操作系统");
-    println!("       第一周：裸机启动 / SBI 输出 / 内存布局\n");
+    println!("       CCNUOS v0.2.0 — RISC-V 64 (SV39) 教学操作系统");
+    println!("       第二周：内核堆 / 伙伴系统分配器\n");
 
     info!("内核已进入 S 态，启动栈可用，.bss 已清零");
     print_memory_layout();
 
-    debug!("这条是 DEBUG，默认被编译期过滤掉；试试 `LOG=DEBUG make run`");
-    trace!("这条是 TRACE，同上");
-    warn!("这是一条警告，用来验证颜色分级是否正常");
-    error!("这是一条错误，同样只是演示");
+    mm::init();
+    mm::heap_test();
 
-    info!("第一周目标达成，主动关机");
+    info!("第二周目标达成，主动关机");
     sbi::shutdown(false)
 }
