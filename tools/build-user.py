@@ -91,12 +91,12 @@ def main() -> int:
 
     for app_id, app in enumerate(apps):
         base = APP_BASE_ADDRESS + app_id * APP_SIZE_LIMIT
-        elf, binary = OUT / app, OUT / f"{app}.bin"
+        elf, stripped = OUT / app, OUT / f"{app}.elf"
 
-        # 先删掉上一次的 .bin。内核 .incbin 嵌进去的正是它，而它不受
-        # cargo 管理 —— 万一 cargo 失败，旧 .bin 会原地留下，内核照样
+        # 先删掉上一次的 .elf。内核 .incbin 嵌进去的正是它，而它不受
+        # cargo 管理 —— 万一 cargo 失败，旧文件会原地留下，内核照样
         # 构建成功，跑的却是上一次的陈旧代码。一个安静到可怕的失败模式。
-        binary.unlink(missing_ok=True)
+        stripped.unlink(missing_ok=True)
 
         result = subprocess.run(
             [tool("cargo"), "build", "--release", "--bin", app],
@@ -109,11 +109,11 @@ def main() -> int:
             sys.stderr.write(result.stderr)
             return result.returncode
 
-        subprocess.run(
-            [objcopy, "--strip-all", str(elf), "-O", "binary", str(binary)], check=True
-        )
+        # 保留 ELF 格式（不加 -O binary），只去掉符号表和调试信息。
+        # 内核需要程序头表才能知道每段该装到哪、该给什么权限。
+        subprocess.run([objcopy, "--strip-all", str(elf), str(stripped)], check=True)
 
-        size = binary.stat().st_size
+        size = stripped.stat().st_size
         if size > APP_SIZE_LIMIT:
             print(f"  [{app_id}] {app}：{size} 字节，超出槽位上限 {APP_SIZE_LIMIT}")
             return 1

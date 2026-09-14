@@ -146,14 +146,15 @@ pub fn rust_main() -> ! {
     clear_bss();
 
     println!("{}", BANNER);
-    println!("       CCNUOS v0.6.0 — RISC-V 64 (SV39) 教学操作系统");
-    println!("       第六周：物理页帧分配器 / SV39 多级页表\n");
+    println!("       CCNUOS v0.7.0 — RISC-V 64 (SV39) 教学操作系统");
+    println!("       第七周：地址空间 / 开启分页\n");
 
     info!("内核已进入 S 态，启动栈可用，.bss 已清零");
     print_memory_layout();
 
     mm::init();
     mm::self_test();
+    mm::enable_paging(); // 此后每一次访存都要经过 MMU
 
     trap::init();
     trap::enable_timer_interrupt();

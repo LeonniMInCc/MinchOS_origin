@@ -17,8 +17,10 @@
 //! 所以初始化顺序是固定的：**堆 → 页帧 → 页表**。
 
 mod address;
+pub mod elf;
 mod frame_allocator;
 mod heap_allocator;
+mod memory_set;
 mod page_table;
 
 #[allow(unused_imports)]
@@ -27,6 +29,8 @@ pub use address::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 pub use frame_allocator::{frame_alloc, FrameTracker};
 #[allow(unused_imports)]
 pub use page_table::{PTEFlags, PageTable, PageTableEntry};
+#[allow(unused_imports)]
+pub use memory_set::{kernel_token, MapArea, MapPermission, MapType, MemorySet, VPNRange};
 
 /// 初始化内存管理子系统。
 ///
@@ -34,6 +38,13 @@ pub use page_table::{PTEFlags, PageTable, PageTableEntry};
 pub fn init() {
     heap_allocator::init();
     frame_allocator::init();
+}
+
+/// 建立并激活内核地址空间。此后所有访存都要经过 MMU。
+///
+/// 必须在 [`init`] 之后调用 —— 页表的每一级都是从页帧分配器要来的。
+pub fn enable_paging() {
+    memory_set::init_kernel_space();
 }
 
 /// 开机自检。
@@ -44,4 +55,5 @@ pub fn self_test() {
     heap_allocator::heap_test();
     frame_allocator::frame_test();
     page_table::page_table_test();
+    memory_set::memory_set_test();
 }

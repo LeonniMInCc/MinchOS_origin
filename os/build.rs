@@ -79,7 +79,7 @@ fn generate_link_app() -> Result<()> {
         writeln!(f, "    .align 3")?;
         writeln!(f, "app_{i}_start:")?;
         // .incbin 把一个文件的原始字节嵌入当前位置
-        writeln!(f, "    .incbin \"{USER_TARGET}/{app}.bin\"")?;
+        writeln!(f, "    .incbin \"{USER_TARGET}/{app}.elf\"")?;
         writeln!(f, "app_{i}_end:")?;
     }
 

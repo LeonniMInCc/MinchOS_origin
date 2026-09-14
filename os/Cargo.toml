@@ -1,6 +1,6 @@
 [package]
 name = "os"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 authors = ["CCNUOS"]
 description = "CCNUOS —— 一个用 Rust 写的 RISC-V 教学操作系统内核"

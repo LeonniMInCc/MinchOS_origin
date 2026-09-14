@@ -25,6 +25,32 @@ global_asm!(include_str!("trap.S"));
 
 extern "C" {
     fn __alltraps();
+    fn __kernel_trap();
+}
+
+/// 把 trap 入口指向内核态版本：内核自己出错时直接 panic 在第一现场。
+fn set_kernel_trap_entry() {
+    // SAFETY: __kernel_trap 是 .align 2 的合法入口。
+    unsafe {
+        stvec::write(__kernel_trap as *const () as usize);
+    }
+}
+
+/// 内核自己触发 trap 时的处理：没有恢复的可能，打印现场后停机。
+///
+/// 内核态的 trap 几乎总是编程错误（解引用了空指针、访问了没映射的地址、
+/// 栈溢出冲过了 guard page）。它和用户态的 trap 有本质区别：
+/// 用户程序出错可以杀掉它继续跑，内核出错则说明整个系统的假设已经破了。
+#[no_mangle]
+pub fn kernel_trap_handler() -> ! {
+    let scause = scause::read();
+    panic!(
+        "内核自身触发了 trap：{:?}\n         scause={:#x}  stval={:#x}  sepc={:#x}",
+        decode_scause(scause),
+        scause,
+        stval::read(),
+        sepc::read()
+    );
 }
 
 /// 初始化 trap 处理：告诉 CPU 出事时往哪跳。
@@ -34,11 +60,17 @@ pub fn init() {
     // stvec 的低 2 位是模式位，0 表示 Direct 模式 —— 所有 trap 都跳到
     // 同一个入口，由软件自己分派。另一种是 Vectored 模式，按中断号跳到
     // 不同偏移，对我们没必要。__alltraps 已经 .align 2，低 2 位天然是 0。
-    let entry = __alltraps as *const () as usize;
-    unsafe {
-        stvec::write(entry);
-    }
-    info!("trap 入口已设置：stvec = {:#x}", entry);
+    // 先指向内核态入口。启动阶段还没有任何用户程序在跑，
+    // 这时出的任何 trap 都是内核自己的问题，应该立刻在第一现场 panic。
+    //
+    // 真正切到 __alltraps 的时机在 `__restore` 开头 —— 所有进入用户态的
+    // 路径都会经过那里。
+    set_kernel_trap_entry();
+    info!(
+        "trap 入口已设置：内核态 {:#x}，用户态 {:#x}",
+        __kernel_trap as *const () as usize,
+        __alltraps as *const () as usize
+    );
 }
 
 /// 打开时钟中断。
@@ -81,6 +113,11 @@ pub fn enable_timer_interrupt() {
 /// 符号名不能被 Rust 改写。
 #[no_mangle]
 pub fn trap_handler(cx: &mut TrapContext) -> &mut TrapContext {
+    // 处理期间 stvec 指向内核态入口：万一内核自己在处理 trap 时又出错，
+    // 会走清晰的 panic 路径，而不是被 __alltraps 当成一次用户态 trap
+    // 再折腾一遍（那样只会得到一个指向 __alltraps 内部的假现场）。
+    set_kernel_trap_entry();
+
     let scause = scause::read();
     let stval = stval::read();
 

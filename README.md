@@ -15,7 +15,8 @@
 | ✅ 第 4 周 (`v0.4`) | 多道程序、`__switch` 任务切换、`sys_yield` 协作式轮转 |
 | ✅ 第 5 周 (`v0.5`) | 时钟中断、时间片轮转、抢占式调度 —— **阶段 I 完成** |
 | ✅ 第 6 周 (`v0.6`) | 物理页帧分配器（RAII 回收）、SV39 三级页表 |
-| ⬜ 第 7 周 | 地址空间抽象、开启分页 |
+| ✅ 第 7 周 (`v0.7`) | 地址空间抽象、开启分页、从 ELF 装载、内核态 trap 入口 |
+| ⬜ 第 8 周 | 跳板页、每进程独立地址空间 |
 
 完整计划见 [ROADMAP.md](ROADMAP.md)。
 
@@ -81,9 +82,11 @@ ccnuos/
         │   ├── heap_allocator.rs   伙伴系统分配器 + #[global_allocator]
         │   ├── address.rs          四种地址/页号的 newtype 封装
         │   ├── frame_allocator.rs  物理页帧分配器 + FrameTracker (RAII)
-        │   └── page_table.rs       SV39 三级页表
+        │   ├── page_table.rs       SV39 三级页表
+        │   ├── memory_set.rs       地址空间：逻辑段 + 页表
+        │   └── elf.rs              最小 ELF64 解析器
         ├── trap/
-        │   ├── trap.S      手写的 __alltraps / __restore
+        │   ├── trap.S      手写的 __alltraps / __restore / __kernel_trap
         │   └── context.rs  TrapContext（34 个寄存器，硬件随时打断）
         ├── task/
         │   ├── switch.S    手写的 __switch
@@ -93,7 +96,7 @@ ccnuos/
 
 user/                     用户程序（独立 crate）
 ├── src/lib.rs            最小运行库：_start、clear_bss、println!
-└── src/bin/              10 个用户程序，含 3 个故意作恶的
+└── src/bin/              11 个用户程序，含 4 个故意作恶的
 
 tools/build-user.py       逐个编译用户程序，基址经 --defsym 进入 RUSTFLAGS
                           （没有分页的代价，第 7 周后可退休）

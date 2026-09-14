@@ -34,11 +34,32 @@ pub const APP_BASE_ADDRESS: usize = 0x8080_0000;
 pub const APP_SIZE_LIMIT: usize = 0x2_0000;
 
 /// 用户程序区的终点（不含）。
-///
-/// 物理页帧分配器必须从这里之后开始 —— 否则它会把用户程序正躺着的
-/// 内存当成空闲页分出去。
 pub const fn app_region_end() -> usize {
     APP_BASE_ADDRESS + MAX_APP_NUM * APP_SIZE_LIMIT
+}
+
+/// 用户栈区的起点，紧接在用户程序区之后。
+///
+/// # 为什么从第 7 周起用户栈不能再放在内核 `.bss` 里
+///
+/// 开启分页后，"用户能不能访问某一页"由页表项的 `U` 位决定。
+/// 内核 `.bss` 整体是不带 `U` 的（里面有内核堆、内核栈这些绝不能给
+/// 用户碰的东西），如果用户栈混在里面，就没法只给它单独开 `U`。
+///
+/// 所以把用户栈单独拎出来，放进一块自己的物理区域。这也让
+/// "哪些内存是给用户的"在内存布局上一目了然。
+pub const USER_STACK_BASE: usize = app_region_end();
+
+/// 用户栈区的终点（不含）。物理页帧分配器必须从这里之后开始 ——
+/// 否则它会把用户程序或用户栈正躺着的内存当成空闲页分出去。
+pub const fn user_stack_region_end() -> usize {
+    USER_STACK_BASE + MAX_APP_NUM * USER_STACK_SIZE
+}
+
+/// 第 `app_id` 个任务的用户栈范围 `[低地址, 栈顶)`。
+pub const fn user_stack_range(app_id: usize) -> (usize, usize) {
+    let bottom = USER_STACK_BASE + app_id * USER_STACK_SIZE;
+    (bottom, bottom + USER_STACK_SIZE)
 }
 
 /// 第 `app_id` 个程序的槽位基址。
