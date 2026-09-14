@@ -146,14 +146,14 @@ pub fn rust_main() -> ! {
     clear_bss();
 
     println!("{}", BANNER);
-    println!("       CCNUOS v0.5.0 — RISC-V 64 (SV39) 教学操作系统");
-    println!("       第五周：时钟中断 / 时间片轮转 / 抢占式调度\n");
+    println!("       CCNUOS v0.6.0 — RISC-V 64 (SV39) 教学操作系统");
+    println!("       第六周：物理页帧分配器 / SV39 多级页表\n");
 
     info!("内核已进入 S 态，启动栈可用，.bss 已清零");
     print_memory_layout();
 
     mm::init();
-    mm::heap_test();
+    mm::self_test();
 
     trap::init();
     trap::enable_timer_interrupt();

@@ -22,7 +22,8 @@
 //! 必须原样留在它自己的内核栈上，等它被调度回来时继续。共用一个栈会互相覆盖。
 
 use crate::config::{
-    app_base, APP_SIZE_LIMIT, KERNEL_STACK_SIZE, MAX_APP_NUM, USER_STACK_SIZE,
+    app_base, app_region_end, APP_BASE_ADDRESS, APP_SIZE_LIMIT, KERNEL_STACK_SIZE, MAX_APP_NUM,
+    USER_STACK_SIZE,
 };
 use crate::trap::TrapContext;
 use core::arch::asm;
@@ -113,7 +114,34 @@ fn app_bytes(app_id: usize) -> (usize, usize) {
 pub fn load_apps() {
     let n = num_app();
     assert!(n <= MAX_APP_NUM, "用户程序数量 {n} 超过上限 {MAX_APP_NUM}");
-    info!("装载 {} 个用户程序：", n);
+
+    // 用户程序区绝不能和内核镜像重叠。
+    //
+    // 这条断言是补上的 —— 早期版本里 APP_BASE_ADDRESS 恰好落在内核堆
+    // 中间，而它一直没出事，只是因为堆从低端分配、用量又小，
+    // 那一片碰巧从没被真正用到。这种"靠运气成立"的正确性迟早要还账：
+    // 内核堆用量一旦涨上去，装载用户程序就会直接踩碎堆，
+    // 而症状会出现在完全无关的地方。
+    //
+    // 现在每次开机都核对一遍，代价是一条比较指令。
+    extern "C" {
+        static ekernel: u8;
+    }
+    let kernel_end = &raw const ekernel as usize;
+    assert!(
+        kernel_end <= APP_BASE_ADDRESS,
+        "内核镜像终点 {:#x} 越过了用户程序区起点 {:#x}，请调大 APP_BASE_ADDRESS",
+        kernel_end,
+        APP_BASE_ADDRESS
+    );
+
+    info!(
+        "装载 {} 个用户程序（内核终点 {:#x}，程序区 {:#x}..{:#x}）：",
+        n,
+        kernel_end,
+        APP_BASE_ADDRESS,
+        app_region_end()
+    );
 
     for app_id in 0..n {
         let (src_start, src_end) = app_bytes(app_id);
