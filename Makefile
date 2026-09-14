@@ -47,7 +47,10 @@ QEMU_ARGS  := -machine virt \
               -bios default \
               -kernel $(KERNEL_BIN)
 
-.PHONY: all build run debug gdb clean fmt clippy asm env check
+DEMO_LOG   := docs/demo.log
+DEMO_HTML  := docs/demo.html
+
+.PHONY: all build run debug gdb clean fmt clippy asm env check demo
 
 all: build
 
@@ -70,6 +73,13 @@ run: build
 	@echo "启动 QEMU（Ctrl-A 然后按 X 可强制退出）"
 	@echo "------------------------------------------------------------"
 	@$(QEMU) $(QEMU_ARGS)
+
+# 录一次启动，渲染成可在浏览器里回放的单文件 HTML。
+# 适合放进答辩材料，或者发给没装 QEMU 的人看。
+demo: build
+	@bash tools/capture.sh $(DEMO_LOG) $(QEMU) $(QEMU_ARGS)
+	@python3 tools/ansi2html.py $(DEMO_LOG) $(DEMO_HTML)
+	@echo "用浏览器打开：$(CURDIR)/$(DEMO_HTML)"
 
 # 挂起在第一条指令，等 GDB 连 localhost:1234
 debug: build

@@ -33,15 +33,21 @@ make run
 
 你应该看到 OpenSBI 的 banner，然后是 CCNUOS 的启动信息、内核内存布局表，最后内核主动关机退出 QEMU。
 
+**完整的运行、调试与排错说明见 [docs/RUNNING.md](docs/RUNNING.md)**，包括每一段输出的含义、卡住了怎么退出、以及 OS 开发都有哪些工具。
+
 其他命令：
 
 ```bash
 make check          # 快速类型检查
 make asm            # 反汇编内核，看生成了什么代码
+make demo           # 录一次启动，生成可在浏览器回放的单文件 HTML
 make debug          # 挂起等待 GDB（另开终端跑 make gdb）
 LOG=DEBUG make run  # 调高日志级别（ERROR/WARN/INFO/DEBUG/TRACE）
 make clean
 ```
+
+`make demo` 生成的 [docs/demo.html](docs/demo.html) 把启动过程连同颜色逐字回放出来，
+带播放/暂停/调速，不依赖任何外部资源 —— 发给没装 QEMU 的人也能看。
 
 ## 目录结构
 

@@ -1,5 +1,6 @@
 target/
 *.bin
+docs/demo.log
 *.asm.txt
 qemu.log
 .DS_Store

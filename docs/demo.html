@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CCNUOS 启动回放</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1b1e24;
+    --border: #2b3038;
+    --fg: #d4d4d4;
+    --muted: #8a8f98;
+    --accent: #6ba6ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 20px;
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .wrap { width: 100%; max-width: 900px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .sub code {
+    background: var(--panel); padding: 2px 6px; border-radius: 4px;
+    border: 1px solid var(--border); font-size: 12px;
+  }
+  .term {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,.4);
+  }
+  .bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    background: #202429;
+  }
+  .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .dot.r { background: #ff5f57; } .dot.y { background: #febc2e; } .dot.g { background: #28c840; }
+  .title { margin-left: 8px; color: var(--muted); font-size: 12px; }
+  pre {
+    margin: 0; padding: 16px 18px; height: 62vh; min-height: 360px;
+    overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px; line-height: 1.55;
+  }
+  .cursor {
+    display: inline-block; width: 7px; height: 14px;
+    background: var(--fg); vertical-align: -2px;
+    animation: blink 1.05s steps(2, start) infinite;
+  }
+  @keyframes blink { to { visibility: hidden; } }
+
+  .ctl {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-top: 14px;
+  }
+  button {
+    background: var(--panel); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 7px 14px; font-size: 13px; cursor: pointer;
+    font-family: inherit;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  label { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 7px; }
+  input[type=range] { width: 130px; accent-color: var(--accent); }
+  .progress {
+    flex: 1; min-width: 120px; height: 3px;
+    background: var(--border); border-radius: 2px; overflow: hidden;
+  }
+  .progress > i { display: block; height: 100%; width: 0; background: var(--accent); }
+
+  /* ANSI 颜色，按深色终端的可读性调过 */
+  .c-black   { color: #4a4f57; }
+  .c-red     { color: #ff6b6b; }
+  .c-green   { color: #6bcf7f; }
+  .c-yellow  { color: #e6b450; }
+  .c-blue    { color: #6ba6ff; }
+  .c-magenta { color: #d4bfff; }
+  .c-cyan    { color: #5ccfe6; }
+  .c-white   { color: #e6e6e6; }
+  .c-gray    { color: #8a8f98; }
+  .c-bright-yellow { color: #ffd166; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>CCNUOS 启动回放</h1>
+  <div class="sub">
+    QEMU virt / RISC-V 64 串口输出的真实记录，由 <code>make demo</code> 生成 ·
+    <span id="meta"></span>
+  </div>
+
+  <div class="term">
+    <div class="bar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="title">qemu-system-riscv64 — serial console</span>
+    </div>
+    <pre id="out"></pre>
+  </div>
+
+  <div class="ctl">
+    <button id="play">⏸ 暂停</button>
+    <button id="restart">↻ 重播</button>
+    <button id="skip">⏭ 跳到结尾</button>
+    <label>速度 <input id="speed" type="range" min="200" max="20000" step="200" value="4000"></label>
+    <span class="progress"><i id="bar"></i></span>
+  </div>
+</div>
+
+<script>
+const SEGMENTS = [[null, "\nOpenSBI v1.8.1\n   ____                    _____ ____ _____\n  / __ \\                  / ____|  _ \\_   _|\n | |  | |_ __   ___ _ __ | (___ | |_) || |\n | |  | | '_ \\ / _ \\ '_ \\ \\___ \\|  _ < | |\n | |__| | |_) |  __/ | | |____) | |_) || |_\n  \\____/| .__/ \\___|_| |_|_____/|____/_____|\n        | |\n        |_|\n\nPlatform Name               : riscv-virtio,qemu\nPlatform Features           : medeleg\nPlatform HART Count         : 1\nPlatform HART Protection    : pmp\nPlatform IPI Device         : aclint-mswi\nPlatform Timer Device       : aclint-mtimer @ 10000000Hz\nPlatform Console Device     : uart8250\nPlatform HSM Device         : ---\nPlatform PMU Device         : ---\nPlatform Reboot Device      : syscon-reboot\nPlatform Shutdown Device    : syscon-poweroff\nPlatform Suspend Device     : ---\nPlatform CPPC Device        : ---\nFirmware Base               : 0x80000000\nFirmware Size               : 321 KB\nFirmware RW Offset          : 0x40000\nFirmware RW Size            : 65 KB\nFirmware Heap Offset        : 0x47000\nFirmware Heap Size          : 37 KB (total), 0 KB (reserved), 12 KB (used), 23 KB (free)\nFirmware Scratch Size       : 4096 B (total), 1464 B (used), 2632 B (free)\nRuntime SBI Version         : 3.0\nStandard SBI Extensions     : time,rfnc,ipi,base,hsm,srst,pmu,dbcn,fwft,legacy,dbtr,sse\nExperimental SBI Extensions : none\n\nDomain0 Name                : root\nDomain0 Boot HART           : 0\nDomain0 HARTs               : 0*\nDomain0 Region00            : 0x0000000080040000-0x000000008005ffff M: (F,R,W) S/U: ()\nDomain0 Region01            : 0x0000000080000000-0x000000008003ffff M: (F,R,X) S/U: ()\nDomain0 Region02            : 0x0000000000100000-0x0000000000100fff M: (I,R,W) S/U: (R,W)\nDomain0 Region03            : 0x0000000010000000-0x0000000010000fff M: (I,R,W) S/U: (R,W)\nDomain0 Region04            : 0x0000000002000000-0x000000000200ffff M: (I,R,W) S/U: ()\nDomain0 Region05            : 0x000000000c400000-0x000000000c5fffff M: (I,R,W) S/U: (R,W)\nDomain0 Region06            : 0x000000000c000000-0x000000000c3fffff M: (I,R,W) S/U: (R,W)\nDomain0 Region07            : 0x0000000000000000-0xffffffffffffffff M: () S/U: (R,W,X)\nDomain0 Next Address        : 0x0000000080200000\nDomain0 Next Arg1           : 0x0000000087e00000\nDomain0 Next Mode           : S-mode\nDomain0 SysReset            : yes\nDomain0 SysSuspend          : yes\n\nBoot HART ID                : 0\nBoot HART Domain            : root\nBoot HART Priv Version      : v1.12\nBoot HART Base ISA          : rv64imafdch\nBoot HART ISA Extensions    : sstc,zicntr,zihpm,zicboz,zicbom,sdtrig,svadu\nBoot HART PMP Count         : 16\nBoot HART PMP Granularity   : 2 bits\nBoot HART PMP Address Bits  : 54\nBoot HART MHPM Info         : 16 (0x0007fff8)\nBoot HART Debug Triggers    : 2 triggers\nBoot HART MIDELEG           : 0x0000000000001666\nBoot HART MEDELEG           : 0x0000000000f4b509\n\n   ____   ____  _   _  _   _   ___   ____\n  / ___| / ___|| \\ | || | | | / _ \\ / ___|\n | |    | |    |  \\| || | | || | | |\\___ \\\n | |___ | |___ | |\\  || |_| || |_| | ___) |\n  \\____| \\____||_| \\_| \\___/  \\___/ |____/\n\n       CCNUOS v0.2.0 \u2014 RISC-V 64 (SV39) \u6559\u5b66\u64cd\u4f5c\u7cfb\u7edf\n       \u7b2c\u4e8c\u5468\uff1a\u5185\u6838\u5806 / \u4f19\u4f34\u7cfb\u7edf\u5206\u914d\u5668\n\n"], ["c-blue", "[INFO ] \u5185\u6838\u5df2\u8fdb\u5165 S \u6001\uff0c\u542f\u52a8\u6808\u53ef\u7528\uff0c.bss \u5df2\u6e05\u96f6"], [null, "\n"], ["c-blue", "[INFO ] \u5185\u6838\u5185\u5b58\u5e03\u5c40\uff1a"], [null, "\n"], ["c-blue", "[INFO ]   .text            [0x0080200000, 0x0080205000)    20480 B  (  20 KiB)"], [null, "\n"], ["c-blue", "[INFO ]   .rodata          [0x0080205000, 0x0080207000)     8192 B  (   8 KiB)"], [null, "\n"], ["c-blue", "[INFO ]   .data            [0x0080207000, 0x0080207000)        0 B  (   0 KiB)"], [null, "\n"], ["c-blue", "[INFO ]   .bss             [0x0080217000, 0x0080518000)  3149824 B  (3076 KiB)"], [null, "\n"], ["c-blue", "[INFO ]   boot_stack       [0x0080207000, 0x0080217000)    65536 B  (  64 KiB)"], [null, "\n"], ["c-blue", "[INFO ]   kernel total     [0x0080200000, 0x0080518000)  \u5171 3168 KiB"], [null, "\n"], ["c-blue", "[INFO ] \u5185\u6838\u5806\u5c31\u7eea\uff1a[0x0080217000, 0x0080517000)  3072 KiB"], [null, "\n"], ["c-green", "[DEBUG] \u7533\u8bf7 33 \u5b57\u8282 \u2192 \u5b9e\u9645\u5360\u7528 64 \u5b57\u8282\uff08\u4f19\u4f34\u7cfb\u7edf\u53ea\u8ba4 2 \u7684\u5e42\uff09"], [null, "\n"], ["c-green", "[DEBUG] Box<u32>      @ 0x0080516000"], [null, "\n"], ["c-green", "[DEBUG] Vec<usize>\u00d7500 @ 0x0080217000"], [null, "\n"], ["c-green", "[DEBUG] BTreeMap 100 \u9879\uff0cmap[&99] = 9801"], [null, "\n"], ["c-blue", "[INFO ] \u5806\u81ea\u68c0\u901a\u8fc7\uff1a\u5bb9\u91cf 3072 KiB\uff0c\u5cf0\u503c\u5360\u7528 6680 B\uff0c\u91ca\u653e\u540e\u56de\u843d\u81f3 0 B"], [null, "\n"], ["c-blue", "[INFO ] \u7b2c\u4e8c\u5468\u76ee\u6807\u8fbe\u6210\uff0c\u4e3b\u52a8\u5173\u673a"], [null, "\n"]];
+const TOTAL = SEGMENTS.reduce((n, s) => n + s[1].length, 0);
+
+const out = document.getElementById('out');
+const bar = document.getElementById('bar');
+const playBtn = document.getElementById('play');
+const speedEl = document.getElementById('speed');
+document.getElementById('meta').textContent = TOTAL + ' 字符';
+
+let shown = 0, playing = true, last = null;
+
+function esc(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function render() {
+  let budget = shown, html = '';
+  for (const [cls, text] of SEGMENTS) {
+    if (budget <= 0) break;
+    const part = text.length <= budget ? text : text.slice(0, budget);
+    budget -= part.length;
+    html += cls ? '<span class="' + cls + '">' + esc(part) + '</span>' : esc(part);
+  }
+  if (shown < TOTAL) html += '<span class="cursor"></span>';
+  out.innerHTML = html;
+  bar.style.width = (TOTAL ? (shown / TOTAL * 100) : 100) + '%';
+}
+
+function tick(now) {
+  if (last === null) last = now;
+  const dt = (now - last) / 1000;
+  last = now;
+
+  if (playing && shown < TOTAL) {
+    shown = Math.min(TOTAL, shown + Math.ceil(dt * Number(speedEl.value)));
+    render();
+    out.scrollTop = out.scrollHeight;   // 跟着输出往下滚
+    if (shown >= TOTAL) setPlaying(false);
+  }
+  requestAnimationFrame(tick);
+}
+
+function setPlaying(v) {
+  playing = v;
+  playBtn.textContent = v ? '⏸ 暂停' : '▶ 播放';
+}
+
+playBtn.onclick = () => {
+  if (shown >= TOTAL) { shown = 0; render(); }
+  setPlaying(!playing);
+};
+document.getElementById('restart').onclick = () => {
+  shown = 0; render(); out.scrollTop = 0; setPlaying(true);
+};
+document.getElementById('skip').onclick = () => {
+  shown = TOTAL; render(); out.scrollTop = out.scrollHeight; setPlaying(false);
+};
+
+render();
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
