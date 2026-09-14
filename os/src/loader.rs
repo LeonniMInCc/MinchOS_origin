@@ -19,6 +19,8 @@
 //! 用 `.incbin` 嵌进内核的 `.data` 段。第 13 周做完文件系统后，
 //! 这个模块会被"从磁盘读文件"取代。
 
+use alloc::vec::Vec;
+
 extern "C" {
     /// 由 `build.rs` 生成的 `link_app.S` 提供。
     ///
@@ -48,4 +50,43 @@ pub fn get_app_data(app_id: usize) -> &'static [u8] {
         let end = starts.add(app_id + 1).read_volatile();
         core::slice::from_raw_parts(start as *const u8, end - start)
     }
+}
+
+extern "C" {
+    /// 由 `build.rs` 生成：所有程序的名字，一个接一个的 `\0` 结尾字符串。
+    static _app_names: u8;
+}
+
+/// 所有用户程序的名字，顺序和编号一致。
+///
+/// 每次调用都重新解析一遍。程序数量是个位数，而调用点只有 `exec`，
+/// 没必要为它维护一份缓存。
+pub fn app_names() -> Vec<&'static str> {
+    let mut names = Vec::new();
+    let mut p = &raw const _app_names;
+
+    for _ in 0..num_app() {
+        // SAFETY: link_app.S 保证这里有 num_app() 个连续的 \0 结尾字符串。
+        unsafe {
+            let start = p;
+            let mut len = 0;
+            while p.read_volatile() != 0 {
+                p = p.add(1);
+                len += 1;
+            }
+            p = p.add(1); // 跳过 \0
+
+            let bytes = core::slice::from_raw_parts(start, len);
+            names.push(core::str::from_utf8(bytes).expect("程序名不是合法 UTF-8"));
+        }
+    }
+    names
+}
+
+/// 按名字找一个用户程序的 ELF 字节。`sys_exec` 用它。
+pub fn get_app_data_by_name(name: &str) -> Option<&'static [u8]> {
+    app_names()
+        .iter()
+        .position(|&n| n == name)
+        .map(get_app_data)
 }

@@ -17,7 +17,8 @@
 | ✅ 第 6 周 (`v0.6`) | 物理页帧分配器（RAII 回收）、SV39 三级页表 |
 | ✅ 第 7 周 (`v0.7`) | 地址空间抽象、开启分页、从 ELF 装载、内核态 trap 入口 |
 | ✅ 第 8 周 (`v0.8`) | 跳板页、每进程独立地址空间、内核栈 guard page —— **阶段 II 核心完成** |
-| ⬜ 第 9 周 | 进程管理：fork / exec / waitpid |
+| ✅ 第 9 周 (`v0.9`) | 进程树、fork/exec/waitpid、僵尸回收 —— **阶段 II 完成** |
+| ⬜ 第 10 周 | Shell：文件描述符、sys_read |
 
 完整计划见 [ROADMAP.md](ROADMAP.md)。
 
@@ -92,12 +93,15 @@ ccnuos/
         ├── task/
         │   ├── switch.S    手写的 __switch
         │   ├── context.rs  TaskContext（14 个寄存器，借力调用约定）
-        │   └── tcb.rs      任务控制块
+        │   ├── pid.rs      PID 分配器 + 内核栈（都是 RAII）
+        │   ├── manager.rs  就绪队列
+        │   ├── processor.rs 当前进程 + idle 调度循环
+        │   └── tcb.rs      进程控制块（含进程树）
         └── syscall/        系统调用分派
 
 user/                     用户程序（独立 crate）
 ├── src/lib.rs            最小运行库：_start、clear_bss、println!
-└── src/bin/              11 个用户程序，含 4 个故意作恶的
+└── src/bin/              initproc + 12 个用户程序，含 4 个故意作恶的
                           （全部链接到同一个虚拟地址 0x10000）
 
 ```

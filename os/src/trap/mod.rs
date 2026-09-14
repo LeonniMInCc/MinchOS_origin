@@ -187,7 +187,7 @@ pub fn trap_handler() -> ! {
                 stval,
                 current_trap_cx().sepc
             );
-            exit_current_and_run_next();
+            exit_current_and_run_next(-1);
         }
 
         // --- 非法指令：比如用户程序试图执行只有内核能用的指令 ---
@@ -197,7 +197,7 @@ pub fn trap_handler() -> ! {
                 stval,
                 current_trap_cx().sepc
             );
-            exit_current_and_run_next();
+            exit_current_and_run_next(-1);
         }
 
         // --- 还没处理的情况 ---

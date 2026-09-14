@@ -4,7 +4,7 @@
 //! 真正的文件描述符表，第 13 周接上文件系统。
 
 use crate::mm::translated_byte_buffer;
-use crate::task::{current_task_id, current_user_token};
+use crate::task::{current_pid, current_user_token};
 use alloc::vec::Vec;
 
 /// 标准输出的文件描述符。
@@ -40,7 +40,7 @@ pub fn sys_write(fd: usize, buf: usize, len: usize) -> isize {
     let Some(buffers) = translated_byte_buffer(token, buf, len) else {
         error!(
             "sys_write：任务 {} 传来了不可访问的缓冲区 ptr={:#x} len={}，拒绝",
-            current_task_id(),
+            current_pid(),
             buf,
             len
         );

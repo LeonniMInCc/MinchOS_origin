@@ -11,6 +11,10 @@ const SYSCALL_WRITE: usize = 64;
 const SYSCALL_EXIT: usize = 93;
 const SYSCALL_YIELD: usize = 124;
 const SYSCALL_GET_TIME: usize = 169;
+const SYSCALL_GETPID: usize = 172;
+const SYSCALL_FORK: usize = 220;
+const SYSCALL_EXEC: usize = 221;
+const SYSCALL_WAITPID: usize = 260;
 
 /// 执行一次系统调用。
 ///
@@ -61,6 +65,30 @@ pub fn sys_yield() -> isize {
 /// 会触发非法指令异常。时间也得向内核要。
 pub fn sys_get_time() -> isize {
     syscall(SYSCALL_GET_TIME, [0, 0, 0])
+}
+
+/// 当前进程的 PID。
+pub fn sys_getpid() -> isize {
+    syscall(SYSCALL_GETPID, [0, 0, 0])
+}
+
+/// 复制出一个子进程。父进程拿到子进程 PID，子进程拿到 0。
+pub fn sys_fork() -> isize {
+    syscall(SYSCALL_FORK, [0, 0, 0])
+}
+
+/// 用另一个程序替换当前进程。成功则不返回。
+pub fn sys_exec(path: &str) -> isize {
+    // 内核按 \0 找字符串结尾，所以传进去的必须是 C 风格字符串。
+    // 调用方要保证 path 以 \0 结尾 —— 见 user_lib::exec。
+    syscall(SYSCALL_EXEC, [path.as_ptr() as usize, 0, 0])
+}
+
+/// 回收一个已退出的子进程。
+///
+/// 返回 -1 表示没有这个子进程，-2 表示它还没退出。
+pub fn sys_waitpid(pid: isize, exit_code: *mut i32) -> isize {
+    syscall(SYSCALL_WAITPID, [pid as usize, exit_code as usize, 0])
 }
 
 /// 退出当前程序。永不返回。

@@ -1,111 +1,222 @@
-//! 任务控制块。
+//! 进程控制块。
 
 use super::context::TaskContext;
+use super::pid::{pid_alloc, KernelStack, PidHandle};
 use crate::config::TRAP_CONTEXT;
-use crate::mm::{alloc_kernel_stack, kernel_token, MemorySet, PhysPageNum, VirtAddr};
+use crate::mm::{kernel_token, MemorySet, PhysPageNum, VirtAddr};
+use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
+use alloc::sync::{Arc, Weak};
+use alloc::vec::Vec;
+use core::cell::RefMut;
 
-/// 任务的生命周期状态。
-///
-/// 第 9 周引入真正的进程后还会加上 `Zombie`
-/// （已退出但父进程还没 wait 走它的退出码）。
+/// 进程的生命周期状态。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TaskStatus {
-    /// 就绪，等待被调度
+    /// 就绪，在调度队列里等着
     Ready,
     /// 正在 CPU 上运行
     Running,
-    /// 已退出
-    Exited,
+    /// **僵尸**：已经执行完毕，但父进程还没把它的退出码取走。
+    ///
+    /// 为什么要有这个状态？因为退出码是给父进程看的。如果进程一 `exit`
+    /// 就彻底消失，父进程的 `wait` 就永远拿不到结果了。
+    /// 所以进程退出时先变成僵尸，把用户内存还掉（那部分没人再需要），
+    /// 只留下一个空壳和退出码，等父进程 `wait` 走它。
+    Zombie,
 }
 
-/// 任务控制块 (TCB)：内核眼里的"一个任务"。
+/// 进程控制块 (PCB)。
 ///
-/// 这个结构体的膨胀史就是操作系统抽象能力的成长史：
+/// # 为什么拆成"不可变部分 + `UPSafeCell` 包着的可变部分"
 ///
-/// - 第 4 周：只有状态和任务上下文
-/// - **第 8 周（现在）**：加上独立的地址空间
-/// - 第 9 周：加 PID 和父子关系
+/// 进程之间要互相引用：父进程持有子进程、子进程指回父进程。这必然要用
+/// `Arc`，而 `Arc` 里的东西是不可变的。所以把需要改的字段收进一个
+/// [`UPSafeCell`]。
+///
+/// `pid` 和 `kernel_stack` 留在外面，因为它们一旦确定就不再变 ——
+/// 放进去只会让每次读取都要借一次。
+///
+/// # 结构体的膨胀史
+///
+/// - 第 4 周：状态 + 任务上下文
+/// - 第 8 周：加独立地址空间
+/// - **第 9 周（现在）**：加 PID、父子关系、退出码
 /// - 第 10 周：加文件描述符表
-///
-/// 注意它从第 8 周起**不再是 `Copy`** —— `MemorySet` 拥有一堆物理页帧，
-/// 复制它没有意义。这个变化连带把任务数组从定长数组变成了 `Vec`。
 pub struct TaskControlBlock {
+    // ---- 创建后不再改变 ----
+    pub pid: PidHandle,
+    pub kernel_stack: KernelStack,
+
+    // ---- 会变的部分 ----
+    inner: UPSafeCell<TaskControlBlockInner>,
+}
+
+pub struct TaskControlBlockInner {
     pub task_status: TaskStatus,
     pub task_cx: TaskContext,
-
-    /// 这个任务的地址空间。它被丢弃时，任务占用的全部物理页帧
-    /// （代码、数据、栈、页表本身）会沿着 `FrameTracker` 一路自动归还。
     pub memory_set: MemorySet,
-
-    /// 这个任务的 [`TrapContext`] 所在的**物理**页号。
-    ///
-    /// 为什么要单独存？因为 `TrapContext` 位于任务自己的地址空间里
-    /// （虚拟地址 [`TRAP_CONTEXT`]），而内核跑在自己的地址空间里 ——
-    /// 内核想读写它，只能通过物理页号 + 恒等映射绕过去。
+    /// 这个进程的 [`TrapContext`] 所在的**物理**页号。
     pub trap_cx_ppn: PhysPageNum,
-
-    /// 用户栈顶。第 9 周做 `fork` 时要用。
+    /// 用户栈顶
     pub base_size: usize,
+
+    /// 父进程。用 [`Weak`] 而不是 [`Arc`] —— 否则父子互相强引用，
+    /// 引用计数永远降不到 0，两个进程的内存谁都释放不掉。
+    ///
+    /// **父子关系里，"拥有"的方向是单向的：父进程拥有子进程。**
+    pub parent: Option<Weak<TaskControlBlock>>,
+
+    /// 子进程。父进程持有强引用，所以子进程即使退出成了僵尸，
+    /// 它的 PCB 也会一直活到被 `wait` 走。
+    pub children: Vec<Arc<TaskControlBlock>>,
+
+    /// 退出码。只在 [`TaskStatus::Zombie`] 状态下有意义。
+    pub exit_code: i32,
+}
+
+impl TaskControlBlockInner {
+    pub fn trap_cx(&self) -> &'static mut TrapContext {
+        self.trap_cx_ppn.get_mut()
+    }
+
+    pub fn user_token(&self) -> usize {
+        self.memory_set.token()
+    }
+
+    pub fn is_zombie(&self) -> bool {
+        self.task_status == TaskStatus::Zombie
+    }
 }
 
 impl TaskControlBlock {
-    /// 从一个 ELF 文件创建任务。
-    pub fn new(elf_data: &[u8], app_id: usize) -> Self {
-        // 1. 建立地址空间：ELF 各段 + 用户栈 + TrapContext 页 + 跳板页
-        let (memory_set, user_sp, entry) = MemorySet::from_elf(elf_data);
+    pub fn inner_exclusive_access(&self) -> RefMut<'_, TaskControlBlockInner> {
+        self.inner.exclusive_access()
+    }
 
-        // 2. 记下 TrapContext 页的物理页号
+    pub fn pid(&self) -> usize {
+        self.pid.0
+    }
+
+    /// 从一个 ELF 文件创建进程。只有 `initproc` 走这条路，
+    /// 其余进程都是 `fork` 出来的。
+    pub fn new(elf_data: &[u8]) -> Self {
+        let (memory_set, user_sp, entry) = MemorySet::from_elf(elf_data);
         let trap_cx_ppn = memory_set
             .translate(VirtAddr::from(TRAP_CONTEXT).floor())
             .expect("from_elf 应该已经映射了 TrapContext 页")
             .ppn();
 
-        // 3. 在**内核地址空间**里给它分配内核栈（自带 guard page）
-        let kernel_sp = alloc_kernel_stack(app_id);
+        let pid = pid_alloc();
+        let kernel_stack = KernelStack::new(&pid);
+        let kernel_sp = kernel_stack.top();
 
         let tcb = Self {
-            task_status: TaskStatus::Ready,
-            // 第一次被调度时直接进 trap_return，走"从一次不存在的 trap 返回"
-            task_cx: TaskContext::goto_trap_return(kernel_sp),
-            memory_set,
-            trap_cx_ppn,
-            base_size: user_sp,
+            pid,
+            kernel_stack,
+            // SAFETY: 单核，且所有访问都限制在 inner_exclusive_access 的短作用域内。
+            inner: unsafe {
+                UPSafeCell::new(TaskControlBlockInner {
+                    task_status: TaskStatus::Ready,
+                    task_cx: TaskContext::goto_trap_return(kernel_sp),
+                    memory_set,
+                    trap_cx_ppn,
+                    base_size: user_sp,
+                    parent: None,
+                    children: Vec::new(),
+                    exit_code: 0,
+                })
+            },
         };
 
-        // 4. 填好初始 TrapContext。
-        //
-        // 后三个参数是第 8 周新增的：__alltraps 换页表时需要它们，
-        // 而那一刻它既读不到内核的数据结构，也没有空闲寄存器 ——
-        // 只能事先存在这里。
-        extern "C" {
-            fn trap_handler();
-        }
-        *tcb.trap_cx() = TrapContext::app_init_context(
-            entry,
-            user_sp,
-            kernel_token(),
-            kernel_sp,
-            trap_handler as *const () as usize,
-        );
+        *tcb.inner_exclusive_access().trap_cx() =
+            TrapContext::app_init_context(entry, user_sp, kernel_token(), kernel_sp, trap_entry());
 
-        debug!(
-            "  任务 {} 地址空间就绪：入口 {:#x}，用户栈顶 {:#x}，内核栈顶 {:#x}",
-            app_id, entry, tcb.base_size, kernel_sp
-        );
         tcb
     }
 
-    /// 通过物理页号访问这个任务的 [`TrapContext`]。
+    /// `fork`：复制出一个几乎一模一样的子进程。
     ///
-    /// 这是内核跨地址空间读写用户数据的最简形式：目标页的物理页号是已知的，
-    /// 而内核恒等映射了整个物理内存，所以直接当地址用就行。
-    pub fn trap_cx(&self) -> &'static mut TrapContext {
-        self.trap_cx_ppn.get_mut()
+    /// "几乎"的差别只有三处：
+    ///
+    /// 1. 新的 PID 和新的内核栈
+    /// 2. `TrapContext.kernel_sp` 要指向**子进程自己的**内核栈
+    /// 3. 系统调用返回值不同（由 `sys_fork` 设成 0）
+    ///
+    /// 其余全部照搬 —— 包括 `sepc`，所以父子从**同一条指令**继续执行。
+    /// 这正是 `fork` 那个著名的"一次调用、两次返回"的由来。
+    pub fn fork(self: &Arc<Self>) -> Arc<Self> {
+        let mut parent_inner = self.inner_exclusive_access();
+
+        let memory_set = MemorySet::from_existed_user(&parent_inner.memory_set);
+        let trap_cx_ppn = memory_set
+            .translate(VirtAddr::from(TRAP_CONTEXT).floor())
+            .expect("复制出的地址空间缺少 TrapContext 页")
+            .ppn();
+
+        let pid = pid_alloc();
+        let kernel_stack = KernelStack::new(&pid);
+        let kernel_sp = kernel_stack.top();
+
+        let child = Arc::new(Self {
+            pid,
+            kernel_stack,
+            // SAFETY: 同 new()
+            inner: unsafe {
+                UPSafeCell::new(TaskControlBlockInner {
+                    task_status: TaskStatus::Ready,
+                    task_cx: TaskContext::goto_trap_return(kernel_sp),
+                    memory_set,
+                    trap_cx_ppn,
+                    base_size: parent_inner.base_size,
+                    parent: Some(Arc::downgrade(self)),
+                    children: Vec::new(),
+                    exit_code: 0,
+                })
+            },
+        });
+
+        parent_inner.children.push(Arc::clone(&child));
+        drop(parent_inner);
+
+        // TrapContext 是连同地址空间一起拷过来的，里面的 kernel_sp 还是
+        // 父进程的内核栈。不改的话，子进程第一次陷入内核就会跑到父进程的
+        // 栈上去 —— 两个进程同时用一个内核栈，后果不堪设想。
+        child.inner_exclusive_access().trap_cx().kernel_sp = kernel_sp;
+
+        child
     }
 
-    /// 这个任务地址空间的 `satp`。
-    pub fn user_token(&self) -> usize {
-        self.memory_set.token()
+    /// `exec`：用一个新程序**替换**当前进程的地址空间。
+    ///
+    /// 注意 PID、父子关系、内核栈都不变 —— 换的只是"这个进程在执行什么"。
+    /// 旧的 `MemorySet` 在赋值时被丢弃，它占的物理页帧全部自动归还。
+    pub fn exec(&self, elf_data: &[u8]) {
+        let (memory_set, user_sp, entry) = MemorySet::from_elf(elf_data);
+        let trap_cx_ppn = memory_set
+            .translate(VirtAddr::from(TRAP_CONTEXT).floor())
+            .expect("from_elf 应该已经映射了 TrapContext 页")
+            .ppn();
+
+        let mut inner = self.inner_exclusive_access();
+        inner.memory_set = memory_set; // 旧地址空间在这一行被 Drop
+        inner.trap_cx_ppn = trap_cx_ppn;
+        inner.base_size = user_sp;
+
+        // 内核栈不变，所以 kernel_sp 用的还是原来那个
+        *inner.trap_cx() = TrapContext::app_init_context(
+            entry,
+            user_sp,
+            kernel_token(),
+            self.kernel_stack.top(),
+            trap_entry(),
+        );
     }
+}
+
+fn trap_entry() -> usize {
+    extern "C" {
+        fn trap_handler();
+    }
+    trap_handler as *const () as usize
 }

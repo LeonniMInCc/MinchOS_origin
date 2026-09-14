@@ -29,9 +29,10 @@
 //!   └─────────┴────────────────────────┴─────┴─┴─┴─┴─┴─┴─┴─┴─┘
 //! ```
 
-use super::address::{PhysPageNum, VirtAddr, VirtPageNum};
+use super::address::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use crate::config::PAGE_SIZE;
 use super::frame_allocator::{frame_alloc, FrameTracker};
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::{self, Debug, Formatter};
 use core::ops::BitOr;
@@ -436,4 +437,53 @@ pub fn page_table_test() {
         "页表自检通过：SV39 三级映射、权限位、解除映射、RAII 回收均正确（该页表共占 {} 页）",
         table_pages
     );
+}
+
+/// 从用户地址空间里读出一个以 `\0` 结尾的字符串。
+///
+/// `sys_exec` 用它取程序名。和 [`translated_byte_buffer`] 一样，
+/// 内核不能直接解引用用户指针，只能逐字节翻译。
+///
+/// 逐字节查页表确实慢，但 `exec` 的路径名很短，而且这条路一年也走不了几次 ——
+/// **别为不在热路径上的代码牺牲清晰度。**
+///
+/// 返回 `None` 表示遇到了不可访问的页（同样要求带 `U`）。
+/// 长度上限防的是用户传来一段没有 `\0` 的内存，让内核一直读下去。
+pub fn translated_str(token: usize, ptr: usize, max_len: usize) -> Option<String> {
+    let page_table = PageTable::from_token(token);
+    let mut bytes = Vec::new();
+    for i in 0..max_len {
+        let va = VirtAddr::from(ptr.checked_add(i)?);
+        let pte = page_table.translate(va.floor())?;
+        if !pte.flags().contains(PTEFlags::U | PTEFlags::R) {
+            return None;
+        }
+        let byte = pte.ppn().get_bytes_array()[va.page_offset()];
+        if byte == 0 {
+            return String::from_utf8(bytes).ok();
+        }
+        bytes.push(byte);
+    }
+    None // 读满上限还没遇到 \0
+}
+
+/// 把用户地址空间里的一个 `T` 借出来给内核写。
+///
+/// `sys_waitpid` 用它回填退出码。
+pub fn translated_refmut<T>(token: usize, ptr: usize) -> Option<&'static mut T> {
+    let page_table = PageTable::from_token(token);
+    let va = VirtAddr::from(ptr);
+    // 只处理不跨页的情况。跨页的话物理地址不连续，不能当成一个 T 来写 ——
+    // 与其悄悄写坏，不如明确拒绝。
+    if va.page_offset() + core::mem::size_of::<T>() > PAGE_SIZE {
+        return None;
+    }
+    let pte = page_table.translate(va.floor())?;
+    if !pte.flags().contains(PTEFlags::U | PTEFlags::W) {
+        return None;
+    }
+    let pa: PhysAddr = pte.ppn().into();
+    // SAFETY: 上面已验证该页在用户空间可写、且 T 不跨页；
+    // 内核恒等映射了全部物理内存，所以物理地址可以直接当指针用。
+    Some(unsafe { &mut *((pa.0 + va.page_offset()) as *mut T) })
 }

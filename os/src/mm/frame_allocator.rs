@@ -194,6 +194,35 @@ pub fn stats() -> (usize, usize) {
     (a.allocated(), a.total())
 }
 
+/// 记录一个基线用量，供 [`report_leak`] 对照。
+static BASELINE: UPSafeCell<usize> = unsafe { UPSafeCell::new(0) };
+
+/// 在用户态世界启动之前，记下此刻的页帧用量。
+pub fn record_baseline() {
+    *BASELINE.exclusive_access() = stats().0;
+}
+
+/// 全部进程退出之后，核对页帧是否都还回来了。
+///
+/// 这是对整条 RAII 链的端到端检验：进程退出时，
+/// `MemorySet` → `MapArea` → `FrameTracker` 要把用户内存还掉，
+/// `waitpid` 回收 PCB 时 `PidHandle` 和 `KernelStack` 的 `Drop` 要把
+/// PID 和内核栈还掉。任何一环漏了，这个数字就对不上。
+pub fn report_leak() {
+    let baseline = *BASELINE.exclusive_access();
+    let (now, _) = stats();
+    if now == baseline {
+        info!("页帧核对：{} 页，与用户态启动前完全一致，无泄漏", now);
+    } else {
+        error!(
+            "页帧泄漏：用户态启动前 {} 页，现在 {} 页，多出 {} 页没有归还",
+            baseline,
+            now,
+            now as isize - baseline as isize
+        );
+    }
+}
+
 /// 页帧分配器自检。
 pub fn frame_test() {
     let (baseline, total) = stats();

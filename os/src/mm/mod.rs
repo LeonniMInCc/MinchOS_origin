@@ -26,12 +26,16 @@ mod page_table;
 #[allow(unused_imports)]
 pub use address::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 #[allow(unused_imports)]
-pub use frame_allocator::{frame_alloc, FrameTracker};
+pub use frame_allocator::{frame_alloc, record_baseline, report_leak, FrameTracker};
 #[allow(unused_imports)]
-pub use page_table::{translated_byte_buffer, PTEFlags, PageTable, PageTableEntry};
+pub use page_table::{
+    translated_byte_buffer, translated_refmut, translated_str, PTEFlags, PageTable,
+    PageTableEntry,
+};
 #[allow(unused_imports)]
 pub use memory_set::{
-    alloc_kernel_stack, kernel_token, MapArea, MapPermission, MapType, MemorySet, VPNRange,
+    kernel_token, map_kernel_stack, unmap_kernel_stack, MapArea, MapPermission, MapType,
+    MemorySet, VPNRange,
 };
 
 /// 初始化内存管理子系统。

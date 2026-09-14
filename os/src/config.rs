@@ -56,10 +56,13 @@ pub const USER_STACK_SIZE: usize = 4096 * 2;
 /// 内核栈大小：8 KiB。用户程序陷入内核后，内核在这上面运行。
 pub const KERNEL_STACK_SIZE: usize = 4096 * 2;
 
-/// 最多能链接进内核的用户程序数量。
-pub const MAX_APP_NUM: usize = 16;
+/// 同时存在的进程数上限。
+///
+/// 内核栈按 PID 从跳板页往下排，每个占 `KERNEL_STACK_SIZE + 一页 guard page`。
+/// 进程太多会一路排进用户地址空间 —— [`crate::task::pid_alloc`] 在这里拦住。
+pub const MAX_PROCESS_NUM: usize = 64;
 
-/// 第 `app_id` 个任务的内核栈在**内核地址空间**里的位置 `(低地址, 栈顶)`。
+/// PID 为 `pid` 的进程的内核栈在**内核地址空间**里的位置 `(低地址, 栈顶)`。
 ///
 /// 从跳板页往下依次排布，每个栈之间留一页不映射的空隙 ——
 /// 这就是 **guard page**：栈一旦写穿，立刻触发缺页异常，
@@ -67,8 +70,8 @@ pub const MAX_APP_NUM: usize = 16;
 ///
 /// 内核栈溢出是最难查的一类 bug：症状会出现在另一个任务的数据上，
 /// 现场和起因毫无关系。一页地址空间换一个"立刻崩在现场"，非常划算。
-pub const fn kernel_stack_position(app_id: usize) -> (usize, usize) {
+pub const fn kernel_stack_position(pid: usize) -> (usize, usize) {
     // 跳板页自己占一页，所以从 TRAMPOLINE 往下第一个栈也要先跳过它
-    let top = TRAMPOLINE - PAGE_SIZE - app_id * (KERNEL_STACK_SIZE + PAGE_SIZE);
+    let top = TRAMPOLINE - PAGE_SIZE - pid * (KERNEL_STACK_SIZE + PAGE_SIZE);
     (top - KERNEL_STACK_SIZE, top)
 }

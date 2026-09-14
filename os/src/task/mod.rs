@@ -1,173 +1,209 @@
-//! 任务管理与调度。
+//! 进程管理与调度。
 //!
-//! 第 5 周起是**抢占式调度**。任务让出 CPU 有三条路径：
+//! 第 9 周把"一张定长任务表"换成了**一棵进程树**：
 //!
-//! 1. 主动调 `sys_yield`（协作，第 4 周就有了）
-//! 2. 调 `sys_exit` 退出
-//! 3. **时间片用完，被时钟中断强行切走**（第 5 周新增）
+//! ```text
+//!   initproc (pid 0)
+//!     ├── 子进程 A (pid 1)
+//!     ├── 子进程 B (pid 2)
+//!     │     └── 孙进程 (pid 4)
+//!     └── 子进程 C (pid 3)
+//! ```
 //!
-//! 第 3 条是关键：调度不再需要任务配合。一个 `loop {}` 的任务
-//! 再也卡不死系统了。
+//! 进程通过 `fork` 产生、`exec` 换装、`exit` 变成僵尸、
+//! 被父进程 `waitpid` 回收。
 //!
-//! # 调度算法
+//! # 一个进程是怎么消失的
 //!
-//! 最朴素的轮转（Round Robin）：从当前任务的下一个开始，
-//! 环形扫描找第一个 `Ready` 的任务。
+//! 这条路径值得看清楚，它是本章最容易出错的地方：
 //!
-//! 注意这三条路径最终都汇到同一个 [`schedule_next`]。
-//! 无论是"我主动让"还是"被硬件夺走"，切换动作本身完全一样 ——
-//! 差别只在于是谁触发的。
+//! 1. 进程调 `exit`，状态变成 `Zombie`，退出码存进 PCB
+//! 2. **立刻归还用户内存** —— 死掉的进程没理由继续占着几 MiB 物理内存
+//! 3. 它的子进程（如果有）过继给 `initproc`，否则会变成没人回收的孤儿
+//! 4. PCB 本身还活着，因为父进程的 `children` 里握着一个 `Arc`
+//! 5. 父进程 `waitpid` 把它从 `children` 里移除 → 引用计数归零 →
+//!    `PidHandle` 和 `KernelStack` 的 `Drop` 触发，PID 和内核栈归还
+//!
+//! 第 5 步全靠 RAII 自动完成。手写这段回收逻辑的话，四五条退出路径
+//! 里漏掉任何一条都会造成泄漏。
 
 mod context;
+mod manager;
+mod pid;
+mod processor;
 mod switch;
 mod tcb;
 
-use crate::config::MAX_APP_NUM;
-use crate::loader::{get_app_data, num_app};
-use crate::sbi::shutdown;
+use crate::loader::get_app_data_by_name;
 use crate::sync::UPSafeCell;
-use crate::trap::TrapContext;
-use alloc::vec::Vec;
+use alloc::sync::Arc;
 use context::TaskContext;
-use switch::__switch;
+use manager::add_task;
 use tcb::{TaskControlBlock, TaskStatus};
 
-struct TaskManagerInner {
-    /// 第 8 周起 `TaskControlBlock` 不再是 `Copy`（它拥有一整个地址空间），
-    /// 所以定长数组换成了 `Vec`。
-    tasks: Vec<TaskControlBlock>,
-    current_task: usize,
-}
+pub use processor::{
+    current_pid, current_task, current_trap_cx, current_user_token, run_tasks, schedule,
+    take_current_task,
+};
 
-impl TaskManagerInner {
-    const fn empty() -> Self {
-        Self {
-            tasks: Vec::new(),
-            current_task: 0,
-        }
-    }
-}
-
-static TASK_MANAGER: UPSafeCell<TaskManagerInner> =
+/// 所有孤儿进程的收养人。
+///
+/// Unix 里它是 pid 1（`init`）。这里是 pid 0，因为我们的 PID 从 0 开始分配。
+static INITPROC: UPSafeCell<Option<Arc<TaskControlBlock>>> =
     // SAFETY: 单核，且所有访问都限制在 exclusive_access 的短作用域内。
-    unsafe { UPSafeCell::new(TaskManagerInner::empty()) };
+    unsafe { UPSafeCell::new(None) };
 
-/// 初始化任务管理器：为每个程序建立地址空间和内核栈。
-pub fn init() {
-    let n = num_app();
-    // 内核栈从跳板页往下依次排布，每个占 KERNEL_STACK_SIZE + 一页 guard page。
-    // 任务太多会一路排到用户地址空间里去 —— 在这里拦住。
-    assert!(n <= MAX_APP_NUM, "用户程序数量 {n} 超过上限 {MAX_APP_NUM}");
-    let mut inner = TASK_MANAGER.exclusive_access();
-    for app_id in 0..n {
-        inner.tasks.push(TaskControlBlock::new(get_app_data(app_id), app_id));
-    }
-    info!("任务管理器就绪：{} 个任务，各自拥有独立地址空间", n);
+fn initproc() -> Arc<TaskControlBlock> {
+    INITPROC
+        .exclusive_access()
+        .as_ref()
+        .expect("initproc 还没创建")
+        .clone()
 }
 
-/// 当前任务地址空间的 `satp`。`trap_return` 用它切回用户页表。
-pub fn current_user_token() -> usize {
-    let inner = TASK_MANAGER.exclusive_access();
-    inner.tasks[inner.current_task].user_token()
+/// 创建 `initproc` 并放进就绪队列。整个用户态世界的起点。
+pub fn add_initproc() {
+    let data = get_app_data_by_name("initproc").expect("内核镜像里找不到 initproc");
+    let task = Arc::new(TaskControlBlock::new(data));
+    info!("initproc 已创建，pid = {}", task.pid());
+    *INITPROC.exclusive_access() = Some(Arc::clone(&task));
+    add_task(task);
 }
 
-/// 当前任务的 [`TrapContext`]。
+/// 放掉内核对 `initproc` 的最后一个引用。只在关机前调用。
 ///
-/// 它住在用户地址空间里，内核通过物理页号 + 恒等映射访问它。
-pub fn current_trap_cx() -> &'static mut TrapContext {
-    let inner = TASK_MANAGER.exclusive_access();
-    inner.tasks[inner.current_task].trap_cx()
-}
-
-/// 当前正在运行的任务编号。系统调用里用它做权限检查。
-pub fn current_task_id() -> usize {
-    TASK_MANAGER.exclusive_access().current_task
-}
-
-/// 从当前任务的下一个开始环形扫描，找第一个就绪的任务。
-fn find_next_ready(inner: &TaskManagerInner) -> Option<usize> {
-    let n = inner.tasks.len();
-    let current = inner.current_task;
-    (current + 1..current + 1 + n)
-        .map(|id| id % n)
-        .find(|&id| inner.tasks[id].task_status == TaskStatus::Ready)
-}
-
-/// 切到下一个就绪任务。没有就绪任务时关机。
+/// `initproc` 退出后变成僵尸，但它没有父进程，没人会 `waitpid` 它 ——
+/// 引用只剩 [`INITPROC`] 这一个。不放掉的话，它的页表和内核栈会一直占着，
+/// 关机前的页帧核对就会报出一个"假泄漏"。
 ///
-/// 注意这个函数**会返回** —— 但返回的时机是"当前任务将来再次被调度时"。
-/// 中间可能已经跑过了别的任务。
-fn schedule_next() {
-    let (current_cx, next_cx) = {
-        let mut inner = TASK_MANAGER.exclusive_access();
-
-        let Some(next) = find_next_ready(&inner) else {
-            info!("没有就绪任务了，全部执行完毕，关机");
-            drop(inner); // shutdown 不返回，必须手动释放借用
-            shutdown(false);
-        };
-
-        let current = inner.current_task;
-        inner.tasks[next].task_status = TaskStatus::Running;
-        inner.current_task = next;
-
-        // 用 &raw 而不是 &mut / &：同时借用 tasks 的两个元素会过不了借用检查，
-        // 而裸指针的创建不会产生持续的借用。
-        let current_cx = &raw mut inner.tasks[current].task_cx;
-        let next_cx = &raw const inner.tasks[next].task_cx;
-        (current_cx, next_cx)
-        // inner 在这里析构 —— 必须的。__switch 之后我们就不在这个
-        // 执行流里了，Drop 不会在"离开"的那一刻运行。
-    };
-
-    // SAFETY: 两个指针都指向 TASK_MANAGER 里静态存活的 TaskContext。
-    unsafe {
-        __switch(current_cx, next_cx);
-    }
-    // 能走到这里，说明当前任务又被调度回来了。
+/// 放掉之后，整条 RAII 链会走完：`MemorySet` 归还页表页帧、
+/// `KernelStack` 解除内核栈映射、`PidHandle` 归还 PID。
+pub fn release_initproc() {
+    *INITPROC.exclusive_access() = None;
 }
 
-/// 挂起当前任务，切到下一个。`sys_yield` 的落地点。
+/// 挂起当前进程，切回 idle 控制流。`sys_yield` 和时钟中断的落地点。
+///
+/// 这个函数**会返回** —— 但返回的时机是"当前进程再次被调度上来"。
 pub fn suspend_current_and_run_next() {
-    {
-        let mut inner = TASK_MANAGER.exclusive_access();
-        let current = inner.current_task;
-        inner.tasks[current].task_status = TaskStatus::Ready;
-    }
-    schedule_next();
-}
+    let task = take_current_task().expect("没有当前进程");
 
-/// 结束当前任务，切到下一个。永不返回。
-pub fn exit_current_and_run_next() -> ! {
-    {
-        let mut inner = TASK_MANAGER.exclusive_access();
-        let current = inner.current_task;
-        inner.tasks[current].task_status = TaskStatus::Exited;
-    }
-    schedule_next();
-    // 当前任务已经是 Exited，调度器永远不会再选中它，
-    // 所以 schedule_next 里的 __switch 不会返回到这里。
-    unreachable!("已退出的任务不应该被重新调度")
-}
-
-/// 运行第一个任务。永不返回。
-pub fn run_first_task() -> ! {
-    let next_cx = {
-        let mut inner = TASK_MANAGER.exclusive_access();
-        assert!(!inner.tasks.is_empty(), "没有任何用户程序可以运行");
-        inner.tasks[0].task_status = TaskStatus::Running;
-        inner.current_task = 0;
-        &raw const inner.tasks[0].task_cx
+    let task_cx_ptr = {
+        let mut inner = task.inner_exclusive_access();
+        inner.task_status = TaskStatus::Ready;
+        &raw mut inner.task_cx
     };
 
-    // 内核的启动流程本身不是一个"任务"，没有 TaskContext 可存。
-    // 但 __switch 一定会往第一个参数里写东西，所以给它一块废弃的空间。
-    // 这块内容永远不会被读回来 —— 启动流程到此为止，不会再被调度。
-    let mut discarded = TaskContext::zero_init();
+    // 放回队尾再切走。顺序不能反：切走之后这段代码就不执行了。
+    add_task(task);
+    schedule(task_cx_ptr);
+}
 
-    // SAFETY: discarded 在栈上有效；next_cx 指向静态存活的 TaskContext。
-    unsafe {
-        __switch(&raw mut discarded, next_cx);
+/// 结束当前进程。永不返回。
+pub fn exit_current_and_run_next(exit_code: i32) -> ! {
+    let task = take_current_task().expect("没有当前进程");
+    let pid = task.pid();
+
+    let is_initproc = Arc::ptr_eq(&task, &initproc());
+    if is_initproc {
+        info!("initproc 退出，退出码 {}", exit_code);
     }
-    unreachable!("__switch 到第一个任务后不应该返回")
+
+    {
+        let mut inner = task.inner_exclusive_access();
+        inner.task_status = TaskStatus::Zombie;
+        inner.exit_code = exit_code;
+
+        // 把子进程过继给 initproc。
+        //
+        // 不这么做的话，这些子进程退出后就成了没人 wait 的僵尸，
+        // PCB、PID、内核栈全都永远回收不掉。Unix 也是这么处理孤儿的。
+        if !is_initproc && !inner.children.is_empty() {
+            let n = inner.children.len();
+            let foster = initproc();
+            let mut foster_inner = foster.inner_exclusive_access();
+            for child in inner.children.iter() {
+                child.inner_exclusive_access().parent = Some(Arc::downgrade(&foster));
+                foster_inner.children.push(Arc::clone(child));
+            }
+            debug!("进程 {} 的 {} 个子进程过继给 initproc", pid, n);
+        }
+        inner.children.clear();
+
+        // 用户内存立刻还回去，只留一个带退出码的空壳等父进程来收。
+        // 页表本身还留着 —— 它很小，而且 TrapContext 页还挂在上面。
+        inner.memory_set.recycle_data_pages();
+    }
+
+    // 这里只是放掉"当前进程"这一个引用。父进程的 children 里还握着一份，
+    // 所以 PCB 不会现在就消失 —— 它要等 waitpid。
+    drop(task);
+
+    // 进程已经死了，它的 TaskContext 不需要保存。给 __switch 一个
+    // 丢弃用的目标即可。
+    let mut discarded = TaskContext::zero_init();
+    schedule(&raw mut discarded);
+    unreachable!("僵尸进程不应该被重新调度")
+}
+
+/// `waitpid` 的内核实现。
+///
+/// - `pid < 0`：等任意一个子进程
+/// - `Ok(Some((pid, exit_code)))`：回收成功
+/// - `Ok(None)`：有这个子进程，但还没退出
+/// - `Err(())`：根本没有这个子进程
+pub fn wait_child(pid: isize) -> Result<Option<(usize, i32)>, ()> {
+    let task = current_task().expect("没有当前进程");
+    let mut inner = task.inner_exclusive_access();
+
+    let matches = |child: &Arc<TaskControlBlock>| pid < 0 || child.pid() == pid as usize;
+
+    if !inner.children.iter().any(matches) {
+        return Err(());
+    }
+
+    let found = inner
+        .children
+        .iter()
+        .position(|child| matches(child) && child.inner_exclusive_access().is_zombie());
+
+    let Some(idx) = found else {
+        return Ok(None); // 子进程还活着，让调用方去等
+    };
+
+    // 从 children 里移走。这是最后一个强引用 ——
+    // 离开这个作用域时，PidHandle 和 KernelStack 的 Drop 会被触发，
+    // PID 和内核栈自动归还。
+    let child = inner.children.remove(idx);
+    assert_eq!(
+        Arc::strong_count(&child),
+        1,
+        "回收进程 {} 时还有别人持有它的引用",
+        child.pid()
+    );
+
+    let child_pid = child.pid();
+    let exit_code = child.inner_exclusive_access().exit_code;
+    Ok(Some((child_pid, exit_code)))
+}
+
+/// `fork` 当前进程，把子进程放进就绪队列，返回子进程 PID。
+pub fn fork_current() -> usize {
+    let parent = current_task().expect("没有当前进程");
+    let child = parent.fork();
+    let child_pid = child.pid();
+
+    // 子进程从 fork 返回时拿到 0 —— 这就是 fork "一次调用、两次返回"
+    // 里那个能让两边区分彼此的唯一线索。
+    child.inner_exclusive_access().trap_cx().x[10] = 0;
+
+    add_task(child);
+    child_pid
+}
+
+/// 用 `elf_data` 替换当前进程的地址空间。
+pub fn exec_current(elf_data: &[u8]) {
+    current_task()
+        .expect("没有当前进程")
+        .exec(elf_data);
 }

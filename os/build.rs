@@ -71,6 +71,14 @@ fn generate_link_app() -> Result<()> {
         writeln!(f, "    .quad app_{last}_end")?;
     }
 
+    // 程序名表。第 9 周的 `exec` 要按名字找程序，所以名字也得带进内核。
+    // 每个名字是一个以 \0 结尾的字符串，一个接一个排列。
+    writeln!(f, "\n    .global _app_names")?;
+    writeln!(f, "_app_names:")?;
+    for app in &apps {
+        writeln!(f, "    .string \"{app}\"")?;
+    }
+
     for (i, app) in apps.iter().enumerate() {
         writeln!(f, "\n    # {app}")?;
         writeln!(f, "    .section .data")?;

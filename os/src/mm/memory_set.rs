@@ -211,6 +211,31 @@ impl MapArea {
         }
     }
 
+    /// 解除这个段的全部映射，并归还它占用的物理页帧。
+    pub fn unmap(&mut self, page_table: &mut PageTable) {
+        let range = self.vpn_range;
+        for vpn in range.iter() {
+            // 先丢掉 FrameTracker（触发 Drop 归还页帧），再清页表项。
+            // 顺序反过来也能工作，但"先断引用再断映射"更符合直觉。
+            self.data_frames.remove(&vpn);
+            page_table.unmap(vpn);
+        }
+    }
+
+    /// 按另一个段的形状造一个新段：范围、类型、权限都一样，
+    /// 但**不共享任何物理页帧**。
+    ///
+    /// `fork` 用它 —— 子进程要的是一份独立的副本，而不是共享内存。
+    /// （真实系统会用写时复制推迟这次拷贝，那是另一个话题。）
+    pub fn from_another(other: &Self) -> Self {
+        Self {
+            vpn_range: other.vpn_range,
+            data_frames: BTreeMap::new(),
+            map_type: other.map_type,
+            map_perm: other.map_perm,
+        }
+    }
+
     pub fn range(&self) -> VPNRange {
         self.vpn_range
     }
@@ -453,12 +478,59 @@ impl MemorySet {
         (set, stack_top, elf.entry())
     }
 
-    /// 在**内核地址空间**里给第 `app_id` 个任务分配内核栈，返回栈顶。
+    /// 深拷贝一个用户地址空间。`fork` 的核心。
+    ///
+    /// 逐段复制：形状（虚拟地址范围、权限）照搬，物理页帧全部重新分配，
+    /// 然后把内容一页一页拷过去。结果是两个**布局完全相同、内容完全相同、
+    /// 但互不影响**的地址空间。
+    ///
+    /// 这也解释了为什么 `fork` 在真实系统里要用写时复制优化：
+    /// 这里每 fork 一次就要实打实拷贝整个地址空间，而绝大多数子进程
+    /// 紧接着就会 `exec`，把刚拷来的东西整个丢掉。
+    pub fn from_existed_user(user_space: &Self) -> Self {
+        let mut set = Self::new_bare();
+        set.map_trampoline();
+
+        for area in user_space.areas.iter() {
+            set.push(MapArea::from_another(area), None);
+            // 新段已经映射好了，逐页把内容搬过去
+            for vpn in area.range().iter() {
+                let src = user_space.translate(vpn).expect("源地址空间缺映射").ppn();
+                let dst = set.translate(vpn).expect("新地址空间缺映射").ppn();
+                dst.get_bytes_array().copy_from_slice(src.get_bytes_array());
+            }
+        }
+        set
+    }
+
+    /// 按起始虚拟页号删掉一个段。回收内核栈时用。
+    pub fn remove_area_with_start_vpn(&mut self, start_vpn: VirtPageNum) {
+        if let Some(idx) = self
+            .areas
+            .iter()
+            .position(|area| area.range().start == start_vpn)
+        {
+            let mut area = self.areas.remove(idx);
+            area.unmap(&mut self.page_table);
+        }
+    }
+
+    /// 丢掉所有逻辑段，归还它们占用的物理页帧，但**保留页表本身**。
+    ///
+    /// `exec` 和进程退出时用。为什么不直接丢掉整个 `MemorySet`？
+    /// 因为进程退出后它还要作为僵尸挂在父进程的子进程列表里等 wait，
+    /// 而那期间它占着的用户内存应该立刻还回去 —— 一个已经死掉的进程
+    /// 没理由继续占着几 MiB 物理内存。
+    pub fn recycle_data_pages(&mut self) {
+        self.areas.clear();
+    }
+
+    /// 在**内核地址空间**里给 PID 为 `pid` 的进程分配内核栈，返回栈顶。
     ///
     /// 相邻两个栈之间天然隔着一页不映射的空隙（见
     /// [`crate::config::kernel_stack_position`]），那就是 guard page。
-    pub fn map_kernel_stack(&mut self, app_id: usize) -> usize {
-        let (bottom, top) = kernel_stack_position(app_id);
+    pub fn map_kernel_stack(&mut self, pid: usize) -> usize {
+        let (bottom, top) = kernel_stack_position(pid);
         self.insert_framed_area(
             bottom.into(),
             top.into(),
@@ -529,13 +601,23 @@ pub fn init_kernel_space() {
     );
 }
 
-/// 在内核地址空间里给第 `app_id` 个任务分配内核栈，返回栈顶（虚拟地址）。
-pub fn alloc_kernel_stack(app_id: usize) -> usize {
+/// 在内核地址空间里给 PID 为 `pid` 的进程映射内核栈，返回栈顶（虚拟地址）。
+pub fn map_kernel_stack(pid: usize) -> usize {
     KERNEL_SPACE
         .exclusive_access()
         .as_mut()
         .expect("内核地址空间还没建立")
-        .map_kernel_stack(app_id)
+        .map_kernel_stack(pid)
+}
+
+/// 解除 PID 为 `pid` 的进程的内核栈映射，归还物理页帧。
+pub fn unmap_kernel_stack(pid: usize) {
+    let (bottom, _) = kernel_stack_position(pid);
+    KERNEL_SPACE
+        .exclusive_access()
+        .as_mut()
+        .expect("内核地址空间还没建立")
+        .remove_area_with_start_vpn(VirtAddr::from(bottom).floor());
 }
 
 /// 内核地址空间的 `satp`。每个进程的 TrapContext 里都存着它的副本，
