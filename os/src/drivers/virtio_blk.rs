@@ -248,10 +248,12 @@ impl VirtIOBlk {
             if magic != VIRTIO_MAGIC {
                 continue;
             }
+            // SAFETY: 同上，MAGIC 已经对上，说明这确实是一个 virtio 设备。
             let device_id = unsafe { ((base + DEVICE_ID) as *const u32).read_volatile() };
             if device_id != DEVICE_ID_BLOCK {
                 continue; // 空槽位的 device_id 是 0
             }
+            // SAFETY: 同上。
             let version = unsafe { ((base + VERSION) as *const u32).read_volatile() };
 
             let mut dev = Self {

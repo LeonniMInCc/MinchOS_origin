@@ -37,6 +37,9 @@ const EID_TIME: usize = 0x5449_4D45;
 #[inline(always)]
 fn sbi_call(eid: usize, fid: usize, arg0: usize, arg1: usize, arg2: usize) -> (usize, usize) {
     let (error, value);
+    // SAFETY: 调用方按上面的 # Safety 保证了 EID/FID 组合合法。
+    // 寄存器约定严格遵循 SBI 规范：参数 a0-a2，FID 在 a6，EID 在 a7，
+    // 返回值 a0 = error、a1 = value。
     unsafe {
         asm!(
             "ecall",

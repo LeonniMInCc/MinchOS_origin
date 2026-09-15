@@ -263,6 +263,9 @@ impl PhysPageNum {
     /// 不会在帧被回收之后继续使用返回的引用**。
     pub fn get_pte_array(&self) -> &'static mut [super::page_table::PageTableEntry] {
         let pa: PhysAddr = (*self).into();
+        // SAFETY: 一个物理页 4096 字节，正好放下 512 个 8 字节的页表项；
+        // 整个物理内存都被恒等映射，所以这个地址可解引用。
+        // 生命周期的谎言见上面的 Safety 说明。
         unsafe { core::slice::from_raw_parts_mut(pa.0 as *mut _, PTES_PER_PAGE) }
     }
 
@@ -283,6 +286,8 @@ impl PhysPageNum {
     /// 把这一页当作 4096 个字节来看。装载用户程序、清零页面时用。
     pub fn get_bytes_array(&self) -> &'static mut [u8] {
         let pa: PhysAddr = (*self).into();
+        // SAFETY: 长度正好是一页，不会越界到相邻页。
+        // 恒等映射保证地址可解引用；生命周期见 get_pte_array 的说明。
         unsafe { core::slice::from_raw_parts_mut(pa.0 as *mut u8, PAGE_SIZE) }
     }
 
@@ -305,6 +310,9 @@ impl PhysPageNum {
     /// 把这一页的开头当作一个 `T`。
     pub fn get_mut<T>(&self) -> &'static mut T {
         let pa: PhysAddr = (*self).into();
+        // SAFETY: 页首地址天然按 4096 对齐，满足任何 T 的对齐要求。
+        // 调用方要保证 T 装得进一页、且这一页确实存着一个 T
+        // （目前唯一的用法是 TrapContext）。生命周期见 get_pte_array。
         unsafe { &mut *(pa.0 as *mut T) }
     }
 

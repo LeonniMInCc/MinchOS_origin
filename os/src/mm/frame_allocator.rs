@@ -195,6 +195,7 @@ pub fn stats() -> (usize, usize) {
 }
 
 /// 记录一个基线用量，供 [`report_leak`] 对照。
+// SAFETY: 单核，且所有访问都限制在 exclusive_access 的短作用域内。
 static BASELINE: UPSafeCell<usize> = unsafe { UPSafeCell::new(0) };
 
 /// 在用户态世界启动之前，记下此刻的页帧用量。

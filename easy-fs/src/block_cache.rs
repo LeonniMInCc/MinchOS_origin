@@ -101,12 +101,14 @@ impl BlockCache {
         f(self.get_mut(offset))
     }
 
-    /// 如果是脏的，写回磁盘。
-    pub fn sync(&mut self) {
-        if self.dirty {
-            self.device.write_block(self.block_id, &self.data);
-            self.dirty = false;
+    /// 如果是脏的，写回磁盘。返回是否真的写了。
+    pub fn sync(&mut self) -> bool {
+        if !self.dirty {
+            return false;
         }
+        self.device.write_block(self.block_id, &self.data);
+        self.dirty = false;
+        true
     }
 }
 
@@ -169,10 +171,12 @@ impl BlockCacheManager {
         cache
     }
 
-    fn sync_all(&self) {
-        for (_, cache) in self.queue.iter() {
-            cache.lock().sync();
-        }
+    /// 返回真正写回了几个块。
+    fn sync_all(&self) -> usize {
+        self.queue
+            .iter()
+            .filter(|(_, cache)| cache.lock().sync())
+            .count()
     }
 
     fn clear(&mut self) {
@@ -190,12 +194,18 @@ pub fn get_block_cache(block_id: usize, device: Arc<dyn BlockDevice>) -> Arc<Mut
     MANAGER.lock().get(block_id, device)
 }
 
-/// 把所有脏块强制写回磁盘。
+/// 把所有脏块强制写回磁盘，返回真正写回了几个块。
 ///
 /// 写回策略意味着数据可能只在内存里。关机前、或者任何"必须确保落盘"的
 /// 时刻，都要调它。
-pub fn sync_all_blocks() {
-    MANAGER.lock().sync_all();
+///
+/// # 漏调它的后果是静默丢数据
+///
+/// 内核第 12–15 周一直漏了关机时的这一步。表现是：文件在，内容是空的。
+/// 而且同一次运行里读得到（缓存命中），所以演示全都"正常"。
+/// 详见 `os/src/task/processor.rs` 里 `sync_disk` 的注释。
+pub fn sync_all_blocks() -> usize {
+    MANAGER.lock().sync_all()
 }
 
 /// 写回所有脏块并清空缓存。

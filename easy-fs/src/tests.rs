@@ -445,3 +445,52 @@ fn 多个文件后根目录仍然完好() {
         assert!(buf.iter().all(|&b| b == 5), "prog05 的内容被破坏了");
     });
 }
+
+/// 写回缓存的契约：**不调 `sync_all_blocks`，数据就不在磁盘上。**
+///
+/// 这条看起来是废话，但它正是第 16 周抓到的那个 bug 的根因 ——
+/// 内核关机时漏了这一步，于是用户写的文件重启后变成空文件。
+/// crate 这边一直是对的，错的是调用方。
+///
+/// 所以这个测试盯的不是"sync 能不能工作"（`重新挂载后数据还在` 已经验了），
+/// 而是**不 sync 的后果有多安静**：没有报错、没有返回值异常，
+/// 只是数据悄悄地不见了。把它钉死在这里，下次有人重构缓存时能看到代价。
+#[test]
+fn 不调用_sync_数据就只在内存里() {
+    with_clean_cache(|| {
+        let disk = MemDisk::new(512);
+        let text = b"this must not reach the disk yet";
+
+        let fs = EasyFileSystem::format(disk.clone(), 512, 1, 8);
+        let root = EasyFileSystem::root_inode(&fs);
+        let f = root.create("ghost").unwrap();
+        f.write_at(0, text);
+
+        // 绕开缓存，直接翻"磁盘"上的字节
+        let on_disk = |needle: &[u8]| {
+            disk.blocks
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|b| b.windows(needle.len()).any(|w| w == needle))
+        };
+
+        assert!(
+            !on_disk(text),
+            "还没 sync，数据就已经落盘了 —— 那说明这不是写回缓存"
+        );
+
+        let before = disk.writes();
+        let n = sync_all_blocks();
+        assert!(n > 0, "有脏块没写回，sync_all_blocks 却报告 0");
+        assert_eq!(
+            disk.writes() - before,
+            n,
+            "报告的写回块数和设备上真实发生的写次数对不上"
+        );
+        assert!(on_disk(text), "sync 之后数据仍然不在磁盘上");
+
+        // 再同步一次应该什么都不做 —— 脏标记已经清掉了
+        assert_eq!(sync_all_blocks(), 0, "重复 sync 不该再写盘");
+    });
+}

@@ -99,6 +99,10 @@ const BANNER: &str = r#"
 /// 注意范围是 `sbss..ebss` 而不是 `sbss_with_stack..ebss`：启动栈虽然
 /// 也在 `.bss` 里，但我们此刻正站在这个栈上，清了就等于锯自己坐的树枝。
 fn clear_bss() {
+    // SAFETY: sbss/ebss 是链接脚本给出的 .bss 边界，这段内存归内核独占，
+    // 此刻还没有任何 Rust 代码引用过它。用 write_volatile 是为了防止
+    // 编译器把"写一大片 0"优化成对 memset 的调用 —— 那会在 memset
+    // 自己还没被清零的全局状态上打转。
     (sym_addr!(sbss)..sym_addr!(ebss)).for_each(|addr| unsafe {
         (addr as *mut u8).write_volatile(0);
     });
@@ -200,7 +204,7 @@ pub fn rust_main() -> ! {
         "       CCNUOS v{} — RISC-V 64 (SV39) 教学操作系统",
         env!("CARGO_PKG_VERSION")
     );
-    println!("       第十五周：结构化事件输出 / 教学可视化\n");
+    println!("       16 周从零写成 · 输入 help 看有哪些程序\n");
 
     info!("内核已进入 S 态，启动栈可用，.bss 已清零");
     print_memory_layout();

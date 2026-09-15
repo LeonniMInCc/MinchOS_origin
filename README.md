@@ -5,7 +5,13 @@
 目标不只是"能跑"，而是**每一步都讲得清楚**：仓库按周打 tag，每个 tag 配一篇
 `docs/chXX.md`，`git diff v0.1..v0.2` 就是那一章的全部实验内容。
 
-## 当前状态
+> **`v1.0` 已完成**　16 周 · 24 个系统调用 · 25 个用户态程序 · 零外部依赖 ·
+> 16 个端到端回归用例全部通过
+>
+> [实验报告](docs/REPORT.md) · [答辩材料](docs/slides.html) ·
+> [运行录像](docs/demo.html) · [运行可视化](docs/trace.html)
+
+## 十六周
 
 | 进度 | 内容 |
 |---|---|
@@ -24,7 +30,7 @@
 | ✅ 第 13 周 (`v0.13`) | inode/目录/`open`/`>` 重定向，程序改从磁盘加载 —— **阶段 III 完成** |
 | ✅ 第 14 周 (`v0.14`) | 阻塞/唤醒、互斥锁·信号量·条件变量、死锁检测、中断驱动的串口输入 |
 | ✅ 第 15 周 (`v0.15`) | 结构化事件输出（默认零开销）、调度甘特图 / 系统调用时序 / 进程树 / 地址空间可视化 |
-| ⬜ 第 16 周 | 回归测试、实验报告、答辩材料 |
+| ✅ 第 16 周 (`v1.0`) | 端到端回归测试（16 个用例）、实验报告、答辩材料 —— **项目完成** |
 
 完整计划见 [ROADMAP.md](ROADMAP.md)。
 
@@ -64,7 +70,8 @@ ccnuos> 18ls
 其他命令：
 
 ```bash
-make test           # 文件系统单元测试（宿主机，不需要 QEMU）
+make test           # 文件系统单元测试（宿主机，不需要 QEMU，0.01 秒）
+make regress        # 端到端回归测试：23 个演示程序全跑一遍（约 2 分钟）
 make check          # 快速类型检查
 make asm            # 反汇编内核，看生成了什么代码
 make demo           # 录一次启动，生成可在浏览器回放的单文件 HTML
@@ -89,10 +96,10 @@ ccnuos/
 ├── Makefile              构建与运行入口
 ├── rust-toolchain.toml   钉死工具链版本与 target，保证可复现
 ├── ROADMAP.md            16 周计划
-├── docs/                 每周一篇的讲解文档
+├── docs/                 16 章讲解文档 + 实验报告 + 答辩材料
 └── os/                   内核 crate
     ├── .cargo/config.toml  交叉编译目标 + 链接脚本
-    ├── build.rs            让 LOG 环境变量能触发重新编译
+    ├── build.rs            让 LOG / TRACE 环境变量能触发重新编译
     └── src/
         ├── linker.ld       内存布局，把内核钉在 0x80200000
         ├── entry.asm       入口：支起启动栈，跳进 Rust
@@ -111,7 +118,7 @@ ccnuos/
         │   └── uart.rs        中断驱动的串口输入 + 环形缓冲
         ├── sync/
         │   ├── up.rs          UPSafeCell
-        │   ├── wait_queue.rs  等待队列（本周的真正核心）
+        │   ├── wait_queue.rs  等待队列（三种同步原语共同的底座）
         │   ├── mutex.rs       阻塞式互斥锁
         │   ├── semaphore.rs   计数信号量
         │   └── condvar.rs     条件变量
@@ -152,14 +159,15 @@ easy-fs/                  文件系统（独立 crate，不依赖内核）
 ├── src/layout.rs         超级块、inode、目录项
 ├── src/efs.rs            文件系统本体（分配 inode 与数据块）
 ├── src/vfs.rs            inode 句柄：find / create / ls / 读写
-└── src/tests.rs          17 个单元测试，宿主机上 `make test` 秒级跑完
+└── src/tests.rs          18 个单元测试，宿主机上 `make test` 秒级跑完
 
 easy-fs-fuse/             在宿主机上制作镜像，与内核共用 easy-fs
 
 tools/                    宿主机侧工具，不进内核镜像
 ├── capture.sh            录一次 QEMU 运行
 ├── ansi2html.py          串口输出 → 可回放的 HTML（make demo）
-└── trace2html.py         结构化事件 → 四张可视化图（make trace）
+├── trace2html.py         结构化事件 → 四张可视化图（make trace）
+└── regress.py            端到端回归测试（make regress）
 ```
 
 ## 设计取舍
@@ -171,5 +179,6 @@ tools/                    宿主机侧工具，不进内核镜像
 `PanicInfo::message` 等都已稳定，教学 OS 需要的特性在 stable 上够用了，
 换来的是工具链不会某天早上自己坏掉。
 
-**每个 `unsafe` 都要有理由。** 代码里的 `unsafe` 块都附了说明：为什么这里必须
-绕过类型系统，以及凭什么它是安全的。
+**每个 `unsafe` 都要有理由。** 全部 51 个 `unsafe` 块都附了 `SAFETY` 说明：
+为什么这里必须绕过类型系统，以及凭什么它是安全的。这一条是**核对过的**，
+不是声称的 —— 第 16 周发现有 11 处没写，补齐了。

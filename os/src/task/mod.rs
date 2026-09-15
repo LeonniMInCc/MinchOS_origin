@@ -108,6 +108,7 @@ pub fn suspend_current_and_run_next() {
 /// 只有一个用途，但很重要：idle 发现就绪队列空了时，要能区分
 /// **"活干完了"** 和 **"所有人都卡在互相等待上"**。
 /// 没有这个计数的话，一次死锁会表现成"系统正常关机"—— 最糟的失败方式。
+// SAFETY: 单核，且所有访问都限制在 exclusive_access 的短作用域内。
 static BLOCKED_COUNT: UPSafeCell<usize> = unsafe { UPSafeCell::new(0) };
 
 pub fn blocked_count() -> usize {
@@ -115,6 +116,7 @@ pub fn blocked_count() -> usize {
 }
 
 /// 其中有多少是在等 I/O（而不是在等别的进程）。
+// SAFETY: 同 BLOCKED_COUNT。
 static IO_BLOCKED_COUNT: UPSafeCell<usize> = unsafe { UPSafeCell::new(0) };
 
 pub fn io_blocked_count() -> usize {

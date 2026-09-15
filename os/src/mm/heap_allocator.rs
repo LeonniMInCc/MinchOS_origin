@@ -271,6 +271,9 @@ unsafe impl GlobalAlloc for LockedHeap {
 }
 
 #[global_allocator]
+// SAFETY: 单核，且所有访问都限制在 exclusive_access 的短作用域内。
+// 分配器本身在内核态被调用，而内核不可抢占（sstatus.SIE = 0），
+// 所以不会出现"分配到一半被打断、然后又来一次分配"的重入。
 static HEAP_ALLOCATOR: LockedHeap = LockedHeap(unsafe { UPSafeCell::new(BuddyAllocator::empty()) });
 
 /// 内核堆空间。
