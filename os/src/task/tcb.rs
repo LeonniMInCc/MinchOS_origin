@@ -3,6 +3,7 @@
 use super::context::TaskContext;
 use super::pid::{pid_alloc, KernelStack, PidHandle};
 use crate::config::TRAP_CONTEXT;
+use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{kernel_token, MemorySet, PhysPageNum, VirtAddr};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
@@ -73,6 +74,15 @@ pub struct TaskControlBlockInner {
 
     /// 退出码。只在 [`TaskStatus::Zombie`] 状态下有意义。
     pub exit_code: i32,
+
+    /// 文件描述符表。下标就是 fd，`None` 表示这个槽位空着。
+    ///
+    /// 约定俗成的前三个：0 = 标准输入，1 = 标准输出，2 = 标准错误。
+    ///
+    /// 存 `Arc` 而不是值：`fork` 时父子**共享同一个文件对象**（只复制
+    /// 这张表），这正是 Unix 的语义 —— 父子往同一个 stdout 里写，
+    /// 内容会交错而不是各写各的。第 11 周的管道靠的就是这个。
+    pub fd_table: Vec<Option<Arc<dyn File>>>,
 }
 
 impl TaskControlBlockInner {
@@ -125,6 +135,7 @@ impl TaskControlBlock {
                     parent: None,
                     children: Vec::new(),
                     exit_code: 0,
+                    fd_table: default_fd_table(),
                 })
             },
         };
@@ -172,6 +183,9 @@ impl TaskControlBlock {
                     parent: Some(Arc::downgrade(self)),
                     children: Vec::new(),
                     exit_code: 0,
+                    // 复制这张表，但表里的 Arc 指向同一批文件对象 ——
+                    // 父子共享打开的文件，这是 Unix 的语义
+                    fd_table: parent_inner.fd_table.clone(),
                 })
             },
         });
@@ -212,6 +226,15 @@ impl TaskControlBlock {
             trap_entry(),
         );
     }
+}
+
+/// 新进程的初始文件描述符表：stdin / stdout / stderr。
+fn default_fd_table() -> Vec<Option<Arc<dyn File>>> {
+    alloc::vec![
+        Some(Arc::new(Stdin) as Arc<dyn File>),
+        Some(Arc::new(Stdout) as Arc<dyn File>),
+        Some(Arc::new(Stdout) as Arc<dyn File>),
+    ]
 }
 
 fn trap_entry() -> usize {

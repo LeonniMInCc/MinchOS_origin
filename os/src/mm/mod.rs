@@ -30,7 +30,7 @@ pub use frame_allocator::{frame_alloc, record_baseline, report_leak, FrameTracke
 #[allow(unused_imports)]
 pub use page_table::{
     translated_byte_buffer, translated_refmut, translated_str, PTEFlags, PageTable,
-    PageTableEntry,
+    PageTableEntry, UserBuffer,
 };
 #[allow(unused_imports)]
 pub use memory_set::{

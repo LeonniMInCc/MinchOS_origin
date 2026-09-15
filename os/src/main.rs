@@ -35,6 +35,7 @@ mod console;
 mod logging;
 mod config;
 mod csr;
+mod fs;
 mod lang_items;
 mod loader;
 mod mm;
@@ -146,8 +147,8 @@ pub fn rust_main() -> ! {
     clear_bss();
 
     println!("{}", BANNER);
-    println!("       CCNUOS v0.9.0 — RISC-V 64 (SV39) 教学操作系统");
-    println!("       第九周：进程管理 fork / exec / waitpid\n");
+    println!("       CCNUOS v0.10.0 — RISC-V 64 (SV39) 教学操作系统");
+    println!("       第十周：文件描述符 / 标准输入 / Shell\n");
 
     info!("内核已进入 S 态，启动栈可用，.bss 已清零");
     print_memory_layout();

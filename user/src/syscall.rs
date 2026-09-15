@@ -7,6 +7,8 @@
 
 use core::arch::asm;
 
+const SYSCALL_CLOSE: usize = 57;
+const SYSCALL_READ: usize = 63;
 const SYSCALL_WRITE: usize = 64;
 const SYSCALL_EXIT: usize = 93;
 const SYSCALL_YIELD: usize = 124;
@@ -43,6 +45,19 @@ pub fn sys_write(fd: usize, buffer: &[u8]) -> isize {
         SYSCALL_WRITE,
         [fd, buffer.as_ptr() as usize, buffer.len()],
     )
+}
+
+/// 从文件描述符读数据。返回读到的字节数。
+///
+/// 从标准输入读时会阻塞到有输入为止，而且一次只返回一个字符 ——
+/// 串口是裸设备，没有行缓冲。
+pub fn sys_read(fd: usize, buffer: &mut [u8]) -> isize {
+    syscall(SYSCALL_READ, [fd, buffer.as_mut_ptr() as usize, buffer.len()])
+}
+
+/// 关闭一个文件描述符。
+pub fn sys_close(fd: usize) -> isize {
+    syscall(SYSCALL_CLOSE, [fd, 0, 0])
 }
 
 /// 裸的 write，可以传任意地址 —— 专门用来测试内核的参数校验。

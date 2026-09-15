@@ -57,6 +57,8 @@ QEMU_ARGS  := -machine virt \
               -kernel $(KERNEL_BIN)
 
 DEMO_LOG   := docs/demo.log
+# 喂给 shell 的脚本。第 10 周起 CCNUOS 是交互式的，不给输入就只会停在提示符上。
+DEMO_INPUT := tools/demo-input.txt
 DEMO_HTML  := docs/demo.html
 
 .PHONY: all build run debug gdb clean clean-user fmt clippy asm env check demo user
@@ -111,7 +113,7 @@ run: build
 # 录一次启动，渲染成可在浏览器里回放的单文件 HTML。
 # 适合放进答辩材料，或者发给没装 QEMU 的人看。
 demo: build
-	@bash tools/capture.sh $(DEMO_LOG) $(QEMU) $(QEMU_ARGS)
+	@CCNUOS_INPUT=$(DEMO_INPUT) bash tools/capture.sh $(DEMO_LOG) $(QEMU) $(QEMU_ARGS)
 	@python3 tools/ansi2html.py $(DEMO_LOG) $(DEMO_HTML)
 	@echo "用浏览器打开：$(CURDIR)/$(DEMO_HTML)"
 

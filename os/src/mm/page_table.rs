@@ -487,3 +487,36 @@ pub fn translated_refmut<T>(token: usize, ptr: usize) -> Option<&'static mut T> 
     // 内核恒等映射了全部物理内存，所以物理地址可以直接当指针用。
     Some(unsafe { &mut *((pa.0 + va.page_offset()) as *mut T) })
 }
+
+/// 用户缓冲区：一段在用户地址空间里连续、但物理上分散的内存。
+///
+/// [`translated_byte_buffer`] 返回的是按页切开的若干片段。直接把
+/// `Vec<&mut [u8]>` 传来传去很容易写错下标，所以包一层，
+/// 只暴露"总长度"和"逐字节访问"这两件真正需要的事。
+pub struct UserBuffer {
+    buffers: Vec<&'static mut [u8]>,
+}
+
+impl UserBuffer {
+    pub fn new(buffers: Vec<&'static mut [u8]>) -> Self {
+        Self { buffers }
+    }
+
+    pub fn len(&self) -> usize {
+        self.buffers.iter().map(|b| b.len()).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// 按顺序遍历每个字节（只读）。`write` 用它把用户数据送出去。
+    pub fn bytes(&self) -> impl Iterator<Item = u8> + '_ {
+        self.buffers.iter().flat_map(|b| b.iter().copied())
+    }
+
+    /// 按顺序遍历每个字节（可写）。`read` 用它把数据填进用户内存。
+    pub fn bytes_mut(&mut self) -> impl Iterator<Item = &mut u8> {
+        self.buffers.iter_mut().flat_map(|b| b.iter_mut())
+    }
+}

@@ -18,7 +18,8 @@
 | ✅ 第 7 周 (`v0.7`) | 地址空间抽象、开启分页、从 ELF 装载、内核态 trap 入口 |
 | ✅ 第 8 周 (`v0.8`) | 跳板页、每进程独立地址空间、内核栈 guard page —— **阶段 II 核心完成** |
 | ✅ 第 9 周 (`v0.9`) | 进程树、fork/exec/waitpid、僵尸回收 —— **阶段 II 完成** |
-| ⬜ 第 10 周 | Shell：文件描述符、sys_read |
+| ✅ 第 10 周 (`v0.10`) | `File` trait、文件描述符表、`sys_read`、交互式 shell |
+| ⬜ 第 11 周 | 管道与重定向 |
 
 完整计划见 [ROADMAP.md](ROADMAP.md)。
 
@@ -38,7 +39,13 @@ brew install rustup qemu && rustup default stable && rustup target add riscv64gc
 make run
 ```
 
-你应该看到 OpenSBI 的 banner，然后是 CCNUOS 的启动信息、内核内存布局表，最后内核主动关机退出 QEMU。
+你会看到 OpenSBI 的 banner、CCNUOS 的启动信息和自检，然后进入 shell 提示符：
+
+```
+ccnuos> 
+```
+
+输入 `help` 看有哪些程序，输入程序名回车执行，`exit` 退出（系统随即关机）。
 
 **完整的运行、调试与排错说明见 [docs/RUNNING.md](docs/RUNNING.md)**，包括每一段输出的含义、卡住了怎么退出、以及 OS 开发都有哪些工具。
 
@@ -80,6 +87,9 @@ ccnuos/
         ├── csr.rs          RISC-V 控制状态寄存器访问
         ├── loader.rs       找出嵌在镜像里的用户程序 ELF
         ├── timer.rs        时钟：time CSR + SBI set_timer，10 ms 时间片
+        ├── fs/
+        │   ├── mod.rs      File trait（管道和磁盘文件将复用它）
+        │   └── stdio.rs    标准输入/输出
         ├── mm/
         │   ├── heap_allocator.rs   伙伴系统分配器 + #[global_allocator]
         │   ├── address.rs          四种地址/页号的 newtype 封装
@@ -101,7 +111,7 @@ ccnuos/
 
 user/                     用户程序（独立 crate）
 ├── src/lib.rs            最小运行库：_start、clear_bss、println!
-└── src/bin/              initproc + 12 个用户程序，含 4 个故意作恶的
+└── src/bin/              initproc + user_shell + 12 个用户程序
                           （全部链接到同一个虚拟地址 0x10000）
 
 ```

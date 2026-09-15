@@ -28,9 +28,32 @@ mod lang_items;
 pub mod syscall;
 
 pub use syscall::{
-    sys_exec, sys_exit, sys_fork, sys_get_time, sys_getpid, sys_waitpid, sys_write,
-    sys_write_raw, sys_yield,
+    sys_close, sys_exec, sys_exit, sys_fork, sys_get_time, sys_getpid, sys_read, sys_waitpid,
+    sys_write, sys_write_raw, sys_yield,
 };
+
+/// 标准输入的文件描述符。
+pub const STDIN: usize = 0;
+/// 标准输出的文件描述符。
+pub const STDOUT: usize = 1;
+
+/// 从标准输入读一个字节。会阻塞到真的有输入为止。
+pub fn getchar() -> u8 {
+    let mut buf = [0u8; 1];
+    loop {
+        match sys_read(STDIN, &mut buf) {
+            1 => return buf[0],
+            // 读失败（比如 fd 被关了）。返回 0 让调用方自己判断。
+            n if n < 0 => return 0,
+            _ => yield_now(),
+        }
+    }
+}
+
+/// 关闭一个文件描述符。
+pub fn close(fd: usize) -> isize {
+    sys_close(fd)
+}
 
 /// 主动让出 CPU，让别的程序跑一会儿。
 pub fn yield_now() {
