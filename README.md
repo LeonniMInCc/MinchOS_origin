@@ -8,8 +8,11 @@
 > **`v1.0` 已完成**　16 周 · 24 个系统调用 · 25 个用户态程序 · 零外部依赖 ·
 > 16 个端到端回归用例全部通过
 >
-> [实验报告](docs/REPORT.md) · [答辩材料](docs/slides.html) ·
-> [运行录像](docs/demo.html) · [运行可视化](docs/trace.html)
+> [课程站点](docs/index.html)（20 章可切换）· [实验报告](docs/REPORT.md) ·
+> [答辩材料](docs/slides.html) · [运行录像](docs/demo.html) · [运行可视化](docs/trace.html)
+>
+> **进行中**：[AIOS 篇路线图](docs/ROADMAP-AIOS.md)（第 17–24 周，目标 `v2.0`）·
+> [实验平台设计](docs/PLATFORM.md)
 
 ## 十六周
 
@@ -76,6 +79,7 @@ make check          # 快速类型检查
 make asm            # 反汇编内核，看生成了什么代码
 make demo           # 录一次启动，生成可在浏览器回放的单文件 HTML
 make trace          # 录一次带事件输出的运行，生成四张可视化图
+make course         # 把 docs/ 的章节编译成可切章阅读的单文件课程站点
 make debug          # 挂起等待 GDB（另开终端跑 make gdb）
 LOG=DEBUG make run  # 调高日志级别（ERROR/WARN/INFO/DEBUG/TRACE）
 make clean
@@ -166,6 +170,7 @@ easy-fs-fuse/             在宿主机上制作镜像，与内核共用 easy-fs
 tools/                    宿主机侧工具，不进内核镜像
 ├── capture.sh            录一次 QEMU 运行
 ├── ansi2html.py          串口输出 → 可回放的 HTML（make demo）
+├── build_course.py       章节 markdown → 单文件课程站点（make course）
 ├── trace2html.py         结构化事件 → 四张可视化图（make trace）
 └── regress.py            端到端回归测试（make regress）
 ```

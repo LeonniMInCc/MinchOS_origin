@@ -78,7 +78,10 @@ TRACE_LOG  := docs/trace.log
 TRACE_INPUT := tools/trace-input.txt
 TRACE_HTML := docs/trace.html
 
-.PHONY: all build run debug gdb clean clean-user fmt clippy asm env check demo trace regress user fs-img test
+# 第 17 周：课程站点（实验平台的地基）
+COURSE_HTML := docs/index.html
+
+.PHONY: all build run debug gdb clean clean-user fmt clippy asm env check demo trace regress course user fs-img test
 
 all: build
 
@@ -156,6 +159,12 @@ trace: build fs-img
 		bash tools/capture.sh $(TRACE_LOG) $(QEMU) $(QEMU_ARGS)
 	@python3 tools/trace2html.py $(TRACE_LOG) $(TRACE_HTML)
 	@echo "用浏览器打开：$(CURDIR)/$(TRACE_HTML)"
+
+# 把 docs/ 下的章节编译成一个可切章阅读的单文件课程站点。
+# 章节文本是唯一来源 —— 改 md 重跑就行，不存在两份内容要同步。
+course:
+	@python3 tools/build_course.py $(COURSE_HTML)
+	@echo "用浏览器打开：$(CURDIR)/$(COURSE_HTML)"
 
 # 回归测试：把 23 个演示程序全跑一遍，检查输出对不对。
 # 每个用例单独启动一次 QEMU —— 一组挂了不影响其他组的结果。
