@@ -20,13 +20,15 @@ struct FileDisk(Mutex<std::fs::File>);
 impl BlockDevice for FileDisk {
     fn read_block(&self, block_id: usize, buf: &mut [u8]) {
         let mut f = self.0.lock().unwrap();
-        f.seek(SeekFrom::Start((block_id * BLOCK_SZ) as u64)).unwrap();
+        f.seek(SeekFrom::Start((block_id * BLOCK_SZ) as u64))
+            .unwrap();
         assert_eq!(f.read(buf).unwrap(), BLOCK_SZ, "读块 {block_id} 不完整");
     }
 
     fn write_block(&self, block_id: usize, buf: &[u8]) {
         let mut f = self.0.lock().unwrap();
-        f.seek(SeekFrom::Start((block_id * BLOCK_SZ) as u64)).unwrap();
+        f.seek(SeekFrom::Start((block_id * BLOCK_SZ) as u64))
+            .unwrap();
         assert_eq!(f.write(buf).unwrap(), BLOCK_SZ, "写块 {block_id} 不完整");
     }
 }
@@ -34,7 +36,10 @@ impl BlockDevice for FileDisk {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("用法: {} <输出镜像> <用户程序目录> [块数，默认 4096]", args[0]);
+        eprintln!(
+            "用法: {} <输出镜像> <用户程序目录> [块数，默认 4096]",
+            args[0]
+        );
         std::process::exit(2);
     }
     let (image, src_dir) = (&args[1], &args[2]);
@@ -51,7 +56,8 @@ fn main() {
         .truncate(true)
         .open(image)
         .unwrap_or_else(|e| panic!("打不开 {image}：{e}"));
-    file.set_len((total_blocks as usize * BLOCK_SZ) as u64).unwrap();
+    file.set_len((total_blocks as usize * BLOCK_SZ) as u64)
+        .unwrap();
 
     let device: Arc<dyn BlockDevice> = Arc::new(FileDisk(Mutex::new(file)));
     let fs = EasyFileSystem::format(Arc::clone(&device), total_blocks, 1, 32);
@@ -77,7 +83,10 @@ fn main() {
     let mut total_bytes = 0usize;
     for (name, path) in &programs {
         let mut data = Vec::new();
-        std::fs::File::open(path).unwrap().read_to_end(&mut data).unwrap();
+        std::fs::File::open(path)
+            .unwrap()
+            .read_to_end(&mut data)
+            .unwrap();
 
         let inode = root
             .create(name)
@@ -87,7 +96,11 @@ fn main() {
         // 立刻读回来核对。制作工具交出一个坏镜像的代价太大了 ——
         // 内核启动失败时，你根本分不清是内核的问题还是镜像的问题。
         let mut back = vec![0u8; data.len()];
-        assert_eq!(inode.read_at(0, &mut back), data.len(), "{name} 回读长度不对");
+        assert_eq!(
+            inode.read_at(0, &mut back),
+            data.len(),
+            "{name} 回读长度不对"
+        );
         assert_eq!(back, data, "{name} 回读内容不一致");
 
         total_bytes += data.len();

@@ -228,7 +228,11 @@ pub fn sys_listdir(buf: usize, len: usize) -> isize {
         text.push('\n');
     }
     if text.len() > len {
-        error!("sys_listdir：缓冲区 {} 字节装不下 {} 字节的目录列表", len, text.len());
+        error!(
+            "sys_listdir：缓冲区 {} 字节装不下 {} 字节的目录列表",
+            len,
+            text.len()
+        );
         return -1;
     }
 

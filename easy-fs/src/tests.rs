@@ -140,11 +140,16 @@ fn 淘汰时自动回写() {
         assert_eq!(disk.writes(), 0);
 
         for id in 1..=20 {
-            get_block_cache(id, dev.clone()).lock().read(0, |v: &u32| *v);
+            get_block_cache(id, dev.clone())
+                .lock()
+                .read(0, |v: &u32| *v);
         }
 
         let (_, _, evictions) = block_cache_stats();
-        assert!(evictions > 0, "访问 21 个块应该触发淘汰（缓存只有 16 个槽）");
+        assert!(
+            evictions > 0,
+            "访问 21 个块应该触发淘汰（缓存只有 16 个槽）"
+        );
         assert!(disk.writes() >= 1, "被淘汰的脏块应该自动写回");
 
         // 而且写回的内容是对的
@@ -213,7 +218,10 @@ fn 超级块写入与校验() {
         let dev: Arc<dyn BlockDevice> = disk.clone();
 
         // 未格式化的盘：魔数不对，挂载应该失败
-        assert!(read_super_block(&dev).is_none(), "空盘不该被当成合法文件系统");
+        assert!(
+            read_super_block(&dev).is_none(),
+            "空盘不该被当成合法文件系统"
+        );
 
         get_block_cache(0, dev.clone())
             .lock()
@@ -397,7 +405,10 @@ fn 新分配的数据块是干净的() {
         b.write_at(0, &[0u8; 8]); // 只写 8 字节，但会占一整块
         let mut buf = [0u8; 8];
         b.read_at(0, &mut buf);
-        assert!(buf.iter().all(|&x| x == 0), "新文件里出现了上一个文件的残留");
+        assert!(
+            buf.iter().all(|&x| x == 0),
+            "新文件里出现了上一个文件的残留"
+        );
     });
 }
 
@@ -412,7 +423,9 @@ fn 多个文件后根目录仍然完好() {
 
         for i in 0..21 {
             let name = std::format!("prog{i:02}");
-            let f = root.create(&name).unwrap_or_else(|| panic!("创建 {name} 失败"));
+            let f = root
+                .create(&name)
+                .unwrap_or_else(|| panic!("创建 {name} 失败"));
             f.write_at(0, &vec![i as u8; 9000]); // 和真实程序差不多大
         }
         assert_eq!(root.ls().len(), 21);

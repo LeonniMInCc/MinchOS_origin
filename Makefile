@@ -67,7 +67,18 @@ DEMO_LOG   := docs/demo.log
 DEMO_INPUT := tools/demo-input.txt
 DEMO_HTML  := docs/demo.html
 
-.PHONY: all build run debug gdb clean clean-user fmt clippy asm env check demo user fs-img test
+# 第 15 周：结构化事件输出 + 可视化。
+#
+# TRACE 必须"要么不设、要么有值"—— 内核那边用的是 option_env!("TRACE").is_some()，
+# 所以 TRACE= （空值）也会被认为是打开。这里用 $(if ...) 保证空值时
+# 整个变量赋值都不出现在命令行上，而不是传一个空串过去。
+TRACE      ?=
+TRACE_ENV   = $(if $(TRACE),TRACE=$(TRACE),)
+TRACE_LOG  := docs/trace.log
+TRACE_INPUT := tools/trace-input.txt
+TRACE_HTML := docs/trace.html
+
+.PHONY: all build run debug gdb clean clean-user fmt clippy asm env check demo trace user fs-img test
 
 all: build
 
@@ -106,7 +117,7 @@ clean-user:
 # .cargo/config.toml 的，用 --manifest-path 的话 os/.cargo/config.toml
 # 会被完全忽略，于是按宿主机架构编译，报一堆 "unknown register a0"。
 build: env user
-	@cd $(OS_DIR) && LOG=$(LOG) $(CARGO) build $(CARGO_FLAGS)
+	@cd $(OS_DIR) && LOG=$(LOG) $(TRACE_ENV) $(CARGO) build $(CARGO_FLAGS)
 	@# 剥掉 ELF 头，得到可以直接加载到 0x80200000 的裸二进制
 	@$(OBJCOPY) --strip-all $(KERNEL_ELF) -O binary $(KERNEL_BIN)
 	@echo "内核镜像: $(KERNEL_BIN)  ($$(wc -c < $(KERNEL_BIN) | tr -d ' ') 字节)"
@@ -133,6 +144,18 @@ demo: build fs-img
 	@CCNUOS_INPUT=$(DEMO_INPUT) bash tools/capture.sh $(DEMO_LOG) $(QEMU) $(QEMU_ARGS)
 	@python3 tools/ansi2html.py $(DEMO_LOG) $(DEMO_HTML)
 	@echo "用浏览器打开：$(CURDIR)/$(DEMO_HTML)"
+
+# 录一次带事件输出的运行，渲染成调度甘特图 / 系统调用时序 / 进程树 / 地址空间。
+#
+# 目标专属变量会传递给依赖目标（build），所以 build 会带 TRACE=1 重新编译内核。
+# os/build.rs 里的 rerun-if-env-changed=TRACE 保证 cargo 认得出这个变化 ——
+# 否则会拿一份没有事件输出的旧产物去跑，然后得到一个空日志。
+trace: TRACE := 1
+trace: build fs-img
+	@CCNUOS_BOOT_WAIT=2 CCNUOS_INPUT=$(TRACE_INPUT) \
+		bash tools/capture.sh $(TRACE_LOG) $(QEMU) $(QEMU_ARGS)
+	@python3 tools/trace2html.py $(TRACE_LOG) $(TRACE_HTML)
+	@echo "用浏览器打开：$(CURDIR)/$(TRACE_HTML)"
 
 # 挂起在第一条指令，等 GDB 连 localhost:1234
 debug: build fs-img

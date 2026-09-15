@@ -186,10 +186,7 @@ impl BlockCacheManager {
 static MANAGER: Mutex<BlockCacheManager> = Mutex::new(BlockCacheManager::new());
 
 /// 取一个块的缓存。命中就直接返回内存里的副本。
-pub fn get_block_cache(
-    block_id: usize,
-    device: Arc<dyn BlockDevice>,
-) -> Arc<Mutex<BlockCache>> {
+pub fn get_block_cache(block_id: usize, device: Arc<dyn BlockDevice>) -> Arc<Mutex<BlockCache>> {
     MANAGER.lock().get(block_id, device)
 }
 

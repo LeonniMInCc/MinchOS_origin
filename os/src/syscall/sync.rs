@@ -18,7 +18,11 @@ pub fn sys_mutex_create() -> isize {
 
 pub fn sys_mutex_lock(id: usize) -> isize {
     let Some(mutex) = get_mutex(id) else {
-        error!("sys_mutex_lock：进程 {} 用了不存在的锁 {}", current_pid(), id);
+        error!(
+            "sys_mutex_lock：进程 {} 用了不存在的锁 {}",
+            current_pid(),
+            id
+        );
         return -1;
     };
     mutex.lock();
@@ -27,7 +31,11 @@ pub fn sys_mutex_lock(id: usize) -> isize {
 
 pub fn sys_mutex_unlock(id: usize) -> isize {
     let Some(mutex) = get_mutex(id) else {
-        error!("sys_mutex_unlock：进程 {} 用了不存在的锁 {}", current_pid(), id);
+        error!(
+            "sys_mutex_unlock：进程 {} 用了不存在的锁 {}",
+            current_pid(),
+            id
+        );
         return -1;
     };
     mutex.unlock();
@@ -63,7 +71,10 @@ pub fn sys_condvar_create() -> isize {
 /// `condvar_wait(condvar_id, mutex_id)` —— 放开锁、睡下，醒来重新上锁。
 pub fn sys_condvar_wait(condvar_id: usize, mutex_id: usize) -> isize {
     let (Some(cv), Some(mutex)) = (get_condvar(condvar_id), get_mutex(mutex_id)) else {
-        error!("sys_condvar_wait：条件变量 {} 或锁 {} 不存在", condvar_id, mutex_id);
+        error!(
+            "sys_condvar_wait：条件变量 {} 或锁 {} 不存在",
+            condvar_id, mutex_id
+        );
         return -1;
     };
     cv.wait(&mutex);

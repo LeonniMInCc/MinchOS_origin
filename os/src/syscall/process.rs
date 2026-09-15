@@ -108,7 +108,12 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: usize) -> isize {
                     }
                 }
             }
-            debug!("进程 {} 回收了子进程 {}（退出码 {}）", current_pid(), child_pid, exit_code);
+            debug!(
+                "进程 {} 回收了子进程 {}（退出码 {}）",
+                current_pid(),
+                child_pid,
+                exit_code
+            );
             child_pid as isize
         }
     }

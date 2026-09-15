@@ -13,8 +13,8 @@ use crate::sync::UPSafeCell;
 use alloc::sync::Arc;
 use easy_fs::BlockDevice;
 
-pub use virtio_blk::MMIO_REGION;
 pub use plic::PLIC_REGION;
+pub use virtio_blk::MMIO_REGION;
 
 static BLOCK_DEVICE: UPSafeCell<Option<Arc<dyn BlockDevice>>> =
     // SAFETY: 单核，且所有访问都限制在 exclusive_access 的短作用域内。

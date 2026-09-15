@@ -24,13 +24,11 @@ mod sync;
 use fs::{sys_close, sys_dup, sys_listdir, sys_open, sys_pipe, sys_read, sys_write};
 use sync::{
     sys_condvar_broadcast, sys_condvar_create, sys_condvar_signal, sys_condvar_wait,
-    sys_mutex_create, sys_mutex_lock, sys_mutex_unlock, sys_semaphore_create,
-    sys_semaphore_down, sys_semaphore_up,
+    sys_mutex_create, sys_mutex_lock, sys_mutex_unlock, sys_semaphore_create, sys_semaphore_down,
+    sys_semaphore_up,
 };
 
-use process::{
-    sys_exec, sys_exit, sys_fork, sys_get_time, sys_getpid, sys_waitpid, sys_yield,
-};
+use process::{sys_exec, sys_exit, sys_fork, sys_get_time, sys_getpid, sys_waitpid, sys_yield};
 
 const SYSCALL_DUP: usize = 24;
 const SYSCALL_OPEN: usize = 56;
@@ -61,6 +59,7 @@ const SYSCALL_WAITPID: usize = 260;
 
 /// 分派一次系统调用。由 [`crate::trap::trap_handler`] 调用。
 pub fn syscall(id: usize, args: [usize; 3]) -> isize {
+    crate::event!("sys", "pid={} id={}", crate::task::current_pid(), id);
     match id {
         SYSCALL_DUP => sys_dup(args[0]),
         SYSCALL_OPEN => sys_open(args[0], args[1] as u32),

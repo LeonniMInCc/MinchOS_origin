@@ -28,14 +28,14 @@ pub use address::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 #[allow(unused_imports)]
 pub use frame_allocator::{frame_alloc, record_baseline, report_leak, FrameTracker};
 #[allow(unused_imports)]
-pub use page_table::{
-    translated_byte_buffer, translated_refmut, translated_str, PTEFlags, PageTable,
-    PageTableEntry, UserBuffer,
+pub use memory_set::{
+    kernel_token, map_kernel_stack, unmap_kernel_stack, MapArea, MapPermission, MapType, MemorySet,
+    VPNRange,
 };
 #[allow(unused_imports)]
-pub use memory_set::{
-    kernel_token, map_kernel_stack, unmap_kernel_stack, MapArea, MapPermission, MapType,
-    MemorySet, VPNRange,
+pub use page_table::{
+    translated_byte_buffer, translated_refmut, translated_str, PTEFlags, PageTable, PageTableEntry,
+    UserBuffer,
 };
 
 /// 初始化内存管理子系统。

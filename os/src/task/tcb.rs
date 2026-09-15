@@ -101,7 +101,6 @@ pub struct TaskControlBlockInner {
     /// 退出码。只在 [`TaskStatus::Zombie`] 状态下有意义。
     pub exit_code: i32,
 
-
     /// 文件描述符表。下标就是 fd，`None` 表示这个槽位空着。
     ///
     /// 约定俗成的前三个：0 = 标准输入，1 = 标准输出，2 = 标准错误。
@@ -192,6 +191,10 @@ impl TaskControlBlock {
         *tcb.inner_exclusive_access().trap_cx() =
             TrapContext::app_init_context(entry, user_sp, kernel_token(), kernel_sp, trap_entry());
 
+        tcb.inner_exclusive_access()
+            .memory_set
+            .trace_layout(tcb.pid());
+
         tcb
     }
 
@@ -248,6 +251,14 @@ impl TaskControlBlock {
         // 栈上去 —— 两个进程同时用一个内核栈，后果不堪设想。
         child.inner_exclusive_access().trap_cx().kernel_sp = kernel_sp;
 
+        // 把子进程的地址空间布局报出去。和父进程对比着看，能直接看到
+        // **相同的虚拟页号落在了不同的物理页上** —— fork 到底复制了什么，
+        // 这一眼就清楚了。
+        child
+            .inner_exclusive_access()
+            .memory_set
+            .trace_layout(child.pid());
+
         child
     }
 
@@ -275,6 +286,13 @@ impl TaskControlBlock {
             self.kernel_stack.top(),
             trap_entry(),
         );
+
+        // 先放掉借用再输出。原则见第 14 章那个坑：**能在锁外面做的事，
+        // 就别在锁里面做。**
+        drop(inner);
+        self.inner_exclusive_access()
+            .memory_set
+            .trace_layout(self.pid());
     }
 }
 

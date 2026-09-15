@@ -77,8 +77,7 @@ pub fn init() {
     set_kernel_trap_entry();
     info!(
         "trap 入口已设置：内核态 {:#x}，用户态 {:#x}（跳板页）",
-        __kernel_trap as *const () as usize,
-        TRAMPOLINE
+        __kernel_trap as *const () as usize, TRAMPOLINE
     );
 }
 

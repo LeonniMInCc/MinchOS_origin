@@ -79,13 +79,16 @@ impl SuperBlock {
 pub fn read_super_block(device: &Arc<dyn BlockDevice>) -> Option<SuperBlock> {
     get_block_cache(0, Arc::clone(device))
         .lock()
-        .read(0, |sb: &SuperBlock| {
-            if sb.is_valid() {
-                Some(*sb)
-            } else {
-                None
-            }
-        })
+        .read(
+            0,
+            |sb: &SuperBlock| {
+                if sb.is_valid() {
+                    Some(*sb)
+                } else {
+                    None
+                }
+            },
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -245,7 +248,11 @@ impl DiskInode {
         let data_blocks = Self::data_blocks_for(self.size) as usize;
         self.size = 0;
 
-        for slot in self.direct.iter_mut().take(data_blocks.min(INODE_DIRECT_COUNT)) {
+        for slot in self
+            .direct
+            .iter_mut()
+            .take(data_blocks.min(INODE_DIRECT_COUNT))
+        {
             freed.push(*slot);
             *slot = 0;
         }
@@ -268,12 +275,7 @@ impl DiskInode {
     }
 
     /// 从 `offset` 开始读，最多读满 `buf`。返回实际读了多少。
-    pub fn read_at(
-        &self,
-        offset: usize,
-        buf: &mut [u8],
-        device: &Arc<dyn BlockDevice>,
-    ) -> usize {
+    pub fn read_at(&self, offset: usize, buf: &mut [u8], device: &Arc<dyn BlockDevice>) -> usize {
         let end = (offset + buf.len()).min(self.size as usize);
         if offset >= end {
             return 0;
@@ -286,11 +288,14 @@ impl DiskInode {
             let in_block = pos % BLOCK_SZ;
             let chunk = (BLOCK_SZ - in_block).min(end - pos);
 
-            get_block_cache(self.block_id(block_inner, device) as usize, Arc::clone(device))
-                .lock()
-                .read(0, |data: &[u8; BLOCK_SZ]| {
-                    buf[read..read + chunk].copy_from_slice(&data[in_block..in_block + chunk]);
-                });
+            get_block_cache(
+                self.block_id(block_inner, device) as usize,
+                Arc::clone(device),
+            )
+            .lock()
+            .read(0, |data: &[u8; BLOCK_SZ]| {
+                buf[read..read + chunk].copy_from_slice(&data[in_block..in_block + chunk]);
+            });
 
             read += chunk;
             pos += chunk;
@@ -315,12 +320,14 @@ impl DiskInode {
             let in_block = pos % BLOCK_SZ;
             let chunk = (BLOCK_SZ - in_block).min(end - pos);
 
-            get_block_cache(self.block_id(block_inner, device) as usize, Arc::clone(device))
-                .lock()
-                .modify(0, |data: &mut [u8; BLOCK_SZ]| {
-                    data[in_block..in_block + chunk]
-                        .copy_from_slice(&buf[written..written + chunk]);
-                });
+            get_block_cache(
+                self.block_id(block_inner, device) as usize,
+                Arc::clone(device),
+            )
+            .lock()
+            .modify(0, |data: &mut [u8; BLOCK_SZ]| {
+                data[in_block..in_block + chunk].copy_from_slice(&buf[written..written + chunk]);
+            });
 
             written += chunk;
             pos += chunk;
@@ -374,7 +381,11 @@ impl DirEntry {
     }
 
     pub fn name(&self) -> &str {
-        let len = self.name.iter().position(|&b| b == 0).unwrap_or(self.name.len());
+        let len = self
+            .name
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(self.name.len());
         core::str::from_utf8(&self.name[..len]).unwrap_or("<非法UTF8>")
     }
 

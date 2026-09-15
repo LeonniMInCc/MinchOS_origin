@@ -44,6 +44,8 @@ mod sync;
 mod syscall;
 mod task;
 mod timer;
+#[macro_use]
+mod trace;
 mod trap;
 
 // 把入口汇编整段嵌进来，让它参与链接
@@ -168,7 +170,10 @@ fn persistence_check() {
     easy_fs::sync_all_blocks();
 
     if count == 1 {
-        info!("持久化自检：这是这块盘的第 1 次启动（已创建文件 {}）", COUNTER_FILE);
+        info!(
+            "持久化自检：这是这块盘的第 1 次启动（已创建文件 {}）",
+            COUNTER_FILE
+        );
     } else {
         info!(
             "持久化自检：这是第 {} 次启动 —— 上次写进 {} 的内容确实留在磁盘上了",
@@ -177,7 +182,10 @@ fn persistence_check() {
     }
 
     let (hits, misses, evictions) = easy_fs::block_cache_stats();
-    debug!("块缓存：命中 {}，未命中 {}，淘汰 {}", hits, misses, evictions);
+    debug!(
+        "块缓存：命中 {}，未命中 {}，淘汰 {}",
+        hits, misses, evictions
+    );
 }
 
 /// 内核的 Rust 入口。由 `entry.asm` 在支起栈之后调用，永不返回。
@@ -186,8 +194,13 @@ pub fn rust_main() -> ! {
     clear_bss();
 
     println!("{}", BANNER);
-    println!("       CCNUOS v0.14.0 — RISC-V 64 (SV39) 教学操作系统");
-    println!("       第十四周：阻塞与唤醒 / 同步原语 / 中断驱动的输入\n");
+    // 版本号只有 Cargo.toml 一个来源。之前这里写死过一次，
+    // 结果它一路涨到 v0.15 而 Cargo.toml 还停在 0.12。
+    println!(
+        "       CCNUOS v{} — RISC-V 64 (SV39) 教学操作系统",
+        env!("CARGO_PKG_VERSION")
+    );
+    println!("       第十五周：结构化事件输出 / 教学可视化\n");
 
     info!("内核已进入 S 态，启动栈可用，.bss 已清零");
     print_memory_layout();
@@ -209,6 +222,7 @@ pub fn rust_main() -> ! {
 
     // 记下用户态启动前的页帧用量，退出时核对有没有泄漏
     mm::record_baseline();
+    trace::banner();
     task::add_initproc();
 
     // 一去不回：进入 idle 控制流，不断从就绪队列取进程来跑。

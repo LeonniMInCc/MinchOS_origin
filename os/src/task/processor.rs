@@ -145,6 +145,7 @@ pub fn run_tasks() -> ! {
             let next_cx = &raw const inner.task_cx;
             drop(inner);
 
+            crate::event!("sched", "pid={}", task.pid());
             processor.current = Some(task);
             (idle_cx, next_cx)
             // processor 在这里析构 —— 必须的，__switch 之后我们就离开

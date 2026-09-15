@@ -169,6 +169,7 @@ LOG=WARN  make run     # 只看警告和错误
 | `make clippy` | 静态检查，抓常见错误 |
 | `make asm` | 反汇编内核，看实际生成了什么指令 |
 | `make demo` | 录一次启动，生成可在浏览器里回放的 HTML |
+| `make trace` | 录一次带事件输出的运行，生成四张可视化图 |
 | `make debug` | 挂起等待 GDB 连接 |
 | `make gdb` | 连上去（需另开终端） |
 | `make clean` | 清理构建产物 |
@@ -195,8 +196,30 @@ LOG=DEBUG make demo
 实现在 [`tools/capture.sh`](../tools/capture.sh)（抓日志）和
 [`tools/ansi2html.py`](../tools/ansi2html.py)（ANSI 转义 → 带 class 的 span + JS 回放）。
 
-> 这是第 15 周"教学可视化系统"的雏形。到那一周会升级成：内核输出结构化事件，
-> 宿主机渲染成进程调度甘特图、页表树、系统调用时序图。
+---
+
+## 7.5 看内核内部：`make trace`
+
+`make demo` 回放的是**你本来就能看到的东西**。`make trace` 不一样 ——
+它让内核把平时看不见的动作报出来，再在宿主机上画成图：
+
+```bash
+make trace
+open docs/trace.html
+```
+
+四张图：**调度甘特图**（谁在什么时候占着 CPU、在哪里阻塞）、
+**系统调用时序**（和甘特图横轴对齐，看它跑的时候在干什么）、
+**进程树**（谁 fork 了谁）、**地址空间对照**（同样的虚拟地址落在不同的物理页上）。
+
+想观测别的场景，改 [`tools/trace-input.txt`](../tools/trace-input.txt) 里的命令就行。
+比如把 `19philosophers` 换成 `22deadlock`，就能看到死锁时图上是什么样子。
+
+> **事件输出默认是关的，而且是编译期关的** —— 关闭时二进制里连事件的记号都不存在。
+> 这不是洁癖：打开之后，光是把事件打到串口就要吃掉六成 CPU 时间，
+> 调度行为本身会被观测行为改变。详细的测量见 [ch15.md](ch15.md)。
+
+实现在 [`tools/trace2html.py`](../tools/trace2html.py)，内核侧在 `os/src/trace.rs`。
 
 ---
 

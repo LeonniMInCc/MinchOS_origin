@@ -69,6 +69,7 @@ pub fn add_initproc() {
     let data = read_file("initproc").expect("文件系统里找不到 initproc");
     let task = Arc::new(TaskControlBlock::new(&data));
     info!("initproc 已创建，pid = {}", task.pid());
+    crate::event!("new", "pid={} ppid={}", task.pid(), task.pid());
     *INITPROC.exclusive_access() = Some(Arc::clone(&task));
     add_task(task);
 }
@@ -140,6 +141,9 @@ pub fn block_current_on_io() {
 /// 见 [`crate::sync::wait_on`]。
 pub fn block_current_and_run_next() {
     let task = take_current_task().expect("没有当前进程");
+    // 注意用手上这个 task 取 pid —— current 已经被摘走了，
+    // 此刻 current_pid() 会返回一个无意义的值
+    crate::event!("block", "pid={}", task.pid());
 
     let task_cx_ptr = {
         let mut inner = task.inner_exclusive_access();
@@ -166,6 +170,7 @@ pub fn wakeup_task(task: TaskHandle) {
         );
         inner.task_status = TaskStatus::Ready;
     }
+    crate::event!("wake", "pid={}", task.pid());
     *BLOCKED_COUNT.exclusive_access() -= 1;
     add_task(task);
 }
@@ -175,6 +180,7 @@ pub fn exit_current_and_run_next(exit_code: i32) -> ! {
     let task = take_current_task().expect("没有当前进程");
     let pid = task.pid();
 
+    crate::event!("exit", "pid={} code={}", pid, exit_code);
     let is_initproc = Arc::ptr_eq(&task, &initproc());
     if is_initproc {
         info!("initproc 退出，退出码 {}", exit_code);
@@ -302,13 +308,12 @@ pub fn fork_current() -> usize {
     // 里那个能让两边区分彼此的唯一线索。
     child.inner_exclusive_access().trap_cx().x[10] = 0;
 
+    crate::event!("new", "pid={} ppid={}", child_pid, parent.pid());
     add_task(child);
     child_pid
 }
 
 /// 用 `elf_data` 替换当前进程的地址空间。
 pub fn exec_current(elf_data: &[u8]) {
-    current_task()
-        .expect("没有当前进程")
-        .exec(elf_data);
+    current_task().expect("没有当前进程").exec(elf_data);
 }

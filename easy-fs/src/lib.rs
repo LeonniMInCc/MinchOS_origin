@@ -42,17 +42,15 @@ mod mutex;
 mod vfs;
 
 pub use bitmap::Bitmap;
-pub use block_cache::{
-    block_cache_stats, clear_block_cache, get_block_cache, sync_all_blocks,
-};
+pub use block_cache::{block_cache_stats, clear_block_cache, get_block_cache, sync_all_blocks};
 pub use block_dev::BlockDevice;
 pub use efs::EasyFileSystem;
 pub use layout::{
     read_super_block, DirEntry, DiskInode, DiskInodeType, SuperBlock, EFS_MAGIC, MAX_FILE_SIZE,
     NAME_LENGTH_LIMIT,
 };
-pub use vfs::Inode;
 pub use mutex::Mutex;
+pub use vfs::Inode;
 
 /// 一个块的大小：512 字节。
 ///

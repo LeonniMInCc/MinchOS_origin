@@ -30,8 +30,8 @@
 //! ```
 
 use super::address::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
-use crate::config::PAGE_SIZE;
 use super::frame_allocator::{frame_alloc, FrameTracker};
+use crate::config::PAGE_SIZE;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::{self, Debug, Formatter};
@@ -217,7 +217,9 @@ impl PageTable {
     /// 重复映射同一个 `vpn` 是逻辑错误，直接 panic —— 这种错误
     /// 如果放过去，表现是"某个页神秘地指向了别的地方"，极难定位。
     pub fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
-        let pte = self.find_pte_create(vpn).expect("物理内存耗尽，无法建立映射");
+        let pte = self
+            .find_pte_create(vpn)
+            .expect("物理内存耗尽，无法建立映射");
         assert!(!pte.is_valid(), "{:?} 已经被映射过了", vpn);
         *pte = PageTableEntry::new(ppn, flags | PTEFlags::V);
     }
@@ -235,7 +237,9 @@ impl PageTable {
 
     /// 查询 `vpn` 的映射。没有映射时返回 `None`。
     pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
-        self.find_pte(vpn).filter(|pte| pte.is_valid()).map(|pte| *pte)
+        self.find_pte(vpn)
+            .filter(|pte| pte.is_valid())
+            .map(|pte| *pte)
     }
 
     /// 这棵页表占用的物理页帧数（含根页表和所有中间级）。
@@ -375,24 +379,36 @@ pub fn page_table_test() {
     // --- 第一次映射：一路上两级中间页表都得现建 ---
     pt.map(vpn0, f0.ppn, rw);
     assert_eq!(stats().0 - mark, 2, "首次映射应新建 2 级中间页表");
-    debug!("map(VPN:0x10000)        → 累计占用 {} 页（+2 中间级）", pt.frame_count());
+    debug!(
+        "map(VPN:0x10000)        → 累计占用 {} 页（+2 中间级）",
+        pt.frame_count()
+    );
 
     // --- 相邻的一页：VPN0 变成 1，前两级完全复用，一页都不用加 ---
     pt.map(vpn0.next(), f1.ppn, rw);
     assert_eq!(stats().0 - mark, 2, "相邻页应复用现有页表，不新增页帧");
-    debug!("map(VPN:0x10001)        → 累计占用 {} 页（+0，复用）", pt.frame_count());
+    debug!(
+        "map(VPN:0x10001)        → 累计占用 {} 页（+0，复用）",
+        pt.frame_count()
+    );
 
     // --- 隔 512 页：VPN1 变成 129，需要一张新的末级页表 ---
     let vpn_far = VirtPageNum::from(0x10000 + 512);
     pt.map(vpn_far, f2.ppn, rx);
     assert_eq!(stats().0 - mark, 3, "跨越 VPN1 应新建 1 级页表");
-    debug!("map(VPN:0x10200)        → 累计占用 {} 页（+1 末级）", pt.frame_count());
+    debug!(
+        "map(VPN:0x10200)        → 累计占用 {} 页（+1 末级）",
+        pt.frame_count()
+    );
 
     // --- 隔 512×512 页：VPN2 变成 1，两级都得新建 ---
     let vpn_farther = VirtPageNum::from(0x10000 + 512 * 512);
     pt.map(vpn_farther, f3.ppn, rw);
     assert_eq!(stats().0 - mark, 5, "跨越 VPN2 应新建 2 级页表");
-    debug!("map(VPN:0x50000)        → 累计占用 {} 页（+2）", pt.frame_count());
+    debug!(
+        "map(VPN:0x50000)        → 累计占用 {} 页（+2）",
+        pt.frame_count()
+    );
 
     // --- 翻译回来，地址和权限都要对得上 ---
     for (vpn, ppn, flags, name) in [
@@ -401,19 +417,30 @@ pub fn page_table_test() {
         (vpn_far, f2.ppn, rx, "vpn0+512"),
         (vpn_farther, f3.ppn, rw, "vpn0+512*512"),
     ] {
-        let pte = pt.translate(vpn).unwrap_or_else(|| panic!("{name} 翻译失败"));
+        let pte = pt
+            .translate(vpn)
+            .unwrap_or_else(|| panic!("{name} 翻译失败"));
         assert_eq!(pte.ppn(), ppn, "{name} 翻译出的物理页号不对");
-        assert!(pte.flags().contains(flags | PTEFlags::V), "{name} 权限位不对");
+        assert!(
+            pte.flags().contains(flags | PTEFlags::V),
+            "{name} 权限位不对"
+        );
     }
     // 没映射过的地址必须翻译失败
-    assert!(pt.translate(VirtPageNum::from(0x99999)).is_none(), "未映射的页不该能翻译");
+    assert!(
+        pt.translate(VirtPageNum::from(0x99999)).is_none(),
+        "未映射的页不该能翻译"
+    );
     debug!("四个映射全部翻译正确，未映射的页正确地翻译失败");
 
     // --- 解除映射 ---
     pt.unmap(vpn0);
     assert!(pt.translate(vpn0).is_none(), "unmap 之后不该还能翻译");
     // 其他映射不受影响
-    assert!(pt.translate(vpn0.next()).is_some(), "unmap 误伤了相邻的映射");
+    assert!(
+        pt.translate(vpn0.next()).is_some(),
+        "unmap 误伤了相邻的映射"
+    );
 
     // 第 7 周就是把这个值写进 satp，分页即刻生效。
     // 最高 4 位 8 表示 SV39 模式，低 44 位是根页表的物理页号。

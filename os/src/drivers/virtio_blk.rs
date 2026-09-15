@@ -323,7 +323,10 @@ impl VirtIOBlk {
             return None;
         }
         if (max as usize) < QUEUE_SIZE {
-            error!("virtio-blk：设备队列上限 {} 小于我们要的 {}", max, QUEUE_SIZE);
+            error!(
+                "virtio-blk：设备队列上限 {} 小于我们要的 {}",
+                max, QUEUE_SIZE
+            );
             return None;
         }
         self.write_reg(QUEUE_NUM, QUEUE_SIZE as u32);
@@ -454,11 +457,7 @@ impl BlockDevice for VirtIOBlk {
         assert_eq!(buf.len(), BLOCK_SZ, "块缓冲区大小必须正好是 {BLOCK_SZ}");
         // SAFETY: 同上。
         unsafe {
-            core::ptr::copy_nonoverlapping(
-                buf.as_ptr(),
-                (&raw mut BOUNCE).cast::<u8>(),
-                BLOCK_SZ,
-            );
+            core::ptr::copy_nonoverlapping(buf.as_ptr(), (&raw mut BOUNCE).cast::<u8>(), BLOCK_SZ);
             self.request(block_id, true);
         }
     }

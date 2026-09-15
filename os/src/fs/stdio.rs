@@ -1,8 +1,8 @@
 //! 标准输入与标准输出。都接在 SBI 串口上。
 
 use super::File;
-use crate::mm::UserBuffer;
 use crate::drivers::uart;
+use crate::mm::UserBuffer;
 use crate::sync::wait_on_io;
 
 /// 标准输入（fd 0）。

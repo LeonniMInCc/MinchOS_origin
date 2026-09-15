@@ -27,9 +27,7 @@ pub use semaphore::Semaphore;
 pub use up::UPSafeCell;
 pub use wait_queue::WaitQueue;
 
-use crate::task::{
-    block_current_and_run_next, block_current_on_io, current_task, wakeup_task,
-};
+use crate::task::{block_current_and_run_next, block_current_on_io, current_task, wakeup_task};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 

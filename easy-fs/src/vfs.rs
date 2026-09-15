@@ -97,7 +97,10 @@ impl Inode {
 
     /// 在这个目录里建一个新文件。名字已存在时返回 `None`。
     pub fn create(&self, name: &str) -> Option<Arc<Inode>> {
-        if self.read_disk_inode(|dir| self.find_inode_id(name, dir)).is_some() {
+        if self
+            .read_disk_inode(|dir| self.find_inode_id(name, dir))
+            .is_some()
+        {
             return None; // 已经有了
         }
 

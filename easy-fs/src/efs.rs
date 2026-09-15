@@ -31,8 +31,8 @@ impl EasyFileSystem {
         let data_total = total_blocks - 1 - inode_bitmap_blocks - inode_area_blocks;
         // 数据块位图自己也占块。一块位图管 4096 个数据块，
         // 所以位图块数 = 数据块数 / 4096 向上取整（再算一次扣除）。
-        let data_bitmap_blocks = (data_total + crate::BITS_PER_BLOCK as u32)
-            / (crate::BITS_PER_BLOCK as u32 + 1);
+        let data_bitmap_blocks =
+            (data_total + crate::BITS_PER_BLOCK as u32) / (crate::BITS_PER_BLOCK as u32 + 1);
         let data_area_blocks = data_total - data_bitmap_blocks;
 
         let inode_bitmap = Bitmap::new(1, inode_bitmap_blocks as usize);
@@ -120,9 +120,7 @@ impl EasyFileSystem {
     }
 
     pub fn alloc_inode(&mut self) -> u32 {
-        self.inode_bitmap
-            .alloc(&self.device)
-            .expect("inode 用尽") as u32
+        self.inode_bitmap.alloc(&self.device).expect("inode 用尽") as u32
     }
 
     /// 分配一个数据块，返回**磁盘上的块号**（不是数据区内的编号）。

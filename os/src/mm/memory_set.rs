@@ -284,10 +284,7 @@ impl MemorySet {
         end_va: VirtAddr,
         perm: MapPermission,
     ) {
-        self.push(
-            MapArea::new(start_va, end_va, MapType::Framed, perm),
-            None,
-        );
+        self.push(MapArea::new(start_va, end_va, MapType::Framed, perm), None);
     }
 
     pub fn token(&self) -> usize {
@@ -522,6 +519,60 @@ impl MemorySet {
         }
     }
 
+    /// 把这个地址空间的布局作为结构化事件报出去（第 15 周）。
+    ///
+    /// # 为什么按"段"报而不是把页表倒出来
+    ///
+    /// SV39 的三级页表有 512 × 512 × 512 个槽位。整棵树倒出来既慢
+    /// （每个字符一次 SBI 调用）又没人看得下去。
+    ///
+    /// 而**段**恰好是人脑理解地址空间的那个粒度：代码、只读数据、
+    /// 数据、栈、跳板页 —— 一共七八条。每条再附上首页的物理页号，
+    /// 于是"同一个虚拟地址在不同进程里落到不同物理页"这件事
+    /// 直接就看得见了，这才是分页的重点。
+    pub fn trace_layout(&self, pid: usize) {
+        if !crate::trace::ENABLED {
+            return;
+        }
+        for area in self.areas.iter() {
+            let range = area.range();
+            let perm = area.permission();
+            // 首页的物理页号。恒等映射时它等于虚拟页号 —— 这本身就是信息。
+            let ppn = self
+                .translate(range.start)
+                .map(|pte| pte.ppn().0)
+                .unwrap_or(0);
+            crate::event!(
+                "area",
+                "pid={} vpn={:#x} pages={} ppn={:#x} perm={}{}{}{}",
+                pid,
+                range.start.0,
+                range.end.0 - range.start.0,
+                ppn,
+                if perm.contains(MapPermission::R) {
+                    "R"
+                } else {
+                    "-"
+                },
+                if perm.contains(MapPermission::W) {
+                    "W"
+                } else {
+                    "-"
+                },
+                if perm.contains(MapPermission::X) {
+                    "X"
+                } else {
+                    "-"
+                },
+                if perm.contains(MapPermission::U) {
+                    "U"
+                } else {
+                    "-"
+                },
+            );
+        }
+    }
+
     /// 丢掉所有逻辑段，归还它们占用的物理页帧，但**保留页表本身**。
     ///
     /// `exec` 和进程退出时用。为什么不直接丢掉整个 `MemorySet`？
@@ -665,10 +716,7 @@ pub fn memory_set_test() {
     for i in 0..(PAGE_SIZE + 100) {
         data.push((i % 251) as u8);
     }
-    set.push(
-        MapArea::new(start, end, MapType::Framed, perm),
-        Some(&data),
-    );
+    set.push(MapArea::new(start, end, MapType::Framed, perm), Some(&data));
 
     // 再插一段不带数据的，顺便验证 insert_framed_area 这条路
     let stack_lo = VirtAddr::from(0x2_0000_0000usize);
@@ -678,7 +726,10 @@ pub fn memory_set_test() {
     // 段的自述必须和我们要求的一致
     let last = set.areas.last().unwrap();
     assert_eq!(last.range().len(), 2, "第二个段应该正好 2 页");
-    assert!(last.permission().contains(MapPermission::U), "第二个段应带 U 位");
+    assert!(
+        last.permission().contains(MapPermission::U),
+        "第二个段应带 U 位"
+    );
     assert!(
         set.translate(stack_lo.floor()).is_some(),
         "insert_framed_area 没有真正建立映射"
@@ -690,7 +741,8 @@ pub fn memory_set_test() {
             .translate(vpn)
             .unwrap_or_else(|| panic!("第 {} 页翻译失败", i));
         assert!(
-            pte.flags().contains(PTEFlags::U | PTEFlags::R | PTEFlags::W),
+            pte.flags()
+                .contains(PTEFlags::U | PTEFlags::R | PTEFlags::W),
             "第 {} 页权限不对",
             i
         );
@@ -713,11 +765,7 @@ pub fn memory_set_test() {
     );
 
     drop(set);
-    assert_eq!(
-        stats().0,
-        baseline,
-        "地址空间销毁后页帧没有全部归还"
-    );
+    assert_eq!(stats().0, baseline, "地址空间销毁后页帧没有全部归还");
 
     info!("地址空间自检通过：Framed 映射、跨页拷贝、RAII 整体回收均正确");
 }

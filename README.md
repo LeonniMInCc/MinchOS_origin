@@ -23,7 +23,8 @@
 | ✅ 第 12 周 (`v0.12`) | `easy-fs` 独立 crate（宿主机可测）、virtio-blk 驱动、块缓存 |
 | ✅ 第 13 周 (`v0.13`) | inode/目录/`open`/`>` 重定向，程序改从磁盘加载 —— **阶段 III 完成** |
 | ✅ 第 14 周 (`v0.14`) | 阻塞/唤醒、互斥锁·信号量·条件变量、死锁检测、中断驱动的串口输入 |
-| ⬜ 第 15 周 | 教学可视化 |
+| ✅ 第 15 周 (`v0.15`) | 结构化事件输出（默认零开销）、调度甘特图 / 系统调用时序 / 进程树 / 地址空间可视化 |
+| ⬜ 第 16 周 | 回归测试、实验报告、答辩材料 |
 
 完整计划见 [ROADMAP.md](ROADMAP.md)。
 
@@ -67,6 +68,7 @@ make test           # 文件系统单元测试（宿主机，不需要 QEMU）
 make check          # 快速类型检查
 make asm            # 反汇编内核，看生成了什么代码
 make demo           # 录一次启动，生成可在浏览器回放的单文件 HTML
+make trace          # 录一次带事件输出的运行，生成四张可视化图
 make debug          # 挂起等待 GDB（另开终端跑 make gdb）
 LOG=DEBUG make run  # 调高日志级别（ERROR/WARN/INFO/DEBUG/TRACE）
 make clean
@@ -74,6 +76,11 @@ make clean
 
 `make demo` 生成的 [docs/demo.html](docs/demo.html) 把启动过程连同颜色逐字回放出来，
 带播放/暂停/调速，不依赖任何外部资源 —— 发给没装 QEMU 的人也能看。
+
+`make trace` 生成的 [docs/trace.html](docs/trace.html) 是另一回事：它让内核输出结构化事件，
+在宿主机上渲染成**调度甘特图**、**系统调用时序**、**进程树**和**地址空间对照**四张图。
+事件输出默认关闭且零开销（关闭时二进制里连事件的记号都不存在），
+因为打开之后光是打印事件就要吃掉六成 CPU 时间 —— 详见 [docs/ch15.md](docs/ch15.md)。
 
 ## 目录结构
 
@@ -96,8 +103,8 @@ ccnuos/
         ├── logging.rs      分级彩色日志
         ├── lang_items.rs   panic handler
         ├── csr.rs          RISC-V 控制状态寄存器访问
-        ├── loader.rs       找出嵌在镜像里的用户程序 ELF
         ├── timer.rs        时钟：time CSR + SBI set_timer，10 ms 时间片
+        ├── trace.rs        结构化事件输出（编译期开关，关闭时零开销）
         ├── drivers/
         │   ├── virtio_blk.rs  第一个真正的设备驱动（virtqueue + 轮询）
         │   ├── plic.rs        平台级中断控制器
@@ -148,6 +155,11 @@ easy-fs/                  文件系统（独立 crate，不依赖内核）
 └── src/tests.rs          17 个单元测试，宿主机上 `make test` 秒级跑完
 
 easy-fs-fuse/             在宿主机上制作镜像，与内核共用 easy-fs
+
+tools/                    宿主机侧工具，不进内核镜像
+├── capture.sh            录一次 QEMU 运行
+├── ansi2html.py          串口输出 → 可回放的 HTML（make demo）
+└── trace2html.py         结构化事件 → 四张可视化图（make trace）
 ```
 
 ## 设计取舍
