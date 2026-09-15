@@ -1,6 +1,5 @@
 help
-00hello_world
-11forktest
-09bad_address
-nosuchprogram
+15pipetest
+12words | 13upper
+12words | 13upper | 14wc
 exit

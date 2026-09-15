@@ -28,8 +28,8 @@ mod lang_items;
 pub mod syscall;
 
 pub use syscall::{
-    sys_close, sys_exec, sys_exit, sys_fork, sys_get_time, sys_getpid, sys_read, sys_waitpid,
-    sys_write, sys_write_raw, sys_yield,
+    sys_close, sys_dup, sys_exec, sys_exit, sys_fork, sys_get_time, sys_getpid, sys_pipe,
+    sys_read, sys_waitpid, sys_write, sys_write_raw, sys_yield,
 };
 
 /// 标准输入的文件描述符。
@@ -53,6 +53,29 @@ pub fn getchar() -> u8 {
 /// 关闭一个文件描述符。
 pub fn close(fd: usize) -> isize {
     sys_close(fd)
+}
+
+/// 从文件描述符读一批数据。返回读到的字节数，**0 表示 EOF**。
+pub fn read(fd: usize, buf: &mut [u8]) -> isize {
+    sys_read(fd, buf)
+}
+
+/// 往文件描述符写一批数据。返回写出的字节数。
+pub fn write(fd: usize, buf: &[u8]) -> isize {
+    sys_write(fd, buf)
+}
+
+/// 造一个管道。`fds[0]` 是读端，`fds[1]` 是写端。
+pub fn pipe(fds: &mut [i32; 2]) -> isize {
+    sys_pipe(fds)
+}
+
+/// 复制一个文件描述符，返回当前**最小的空闲编号**。
+///
+/// 重定向就靠这个性质：`close(1)` 之后再 `dup(x)`，
+/// 新副本必然落在 1 上。
+pub fn dup(fd: usize) -> isize {
+    sys_dup(fd)
 }
 
 /// 主动让出 CPU，让别的程序跑一会儿。

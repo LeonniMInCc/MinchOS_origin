@@ -20,11 +20,13 @@
 mod fs;
 mod process;
 
-use fs::{sys_close, sys_read, sys_write};
+use fs::{sys_close, sys_dup, sys_pipe, sys_read, sys_write};
 use process::{
     sys_exec, sys_exit, sys_fork, sys_get_time, sys_getpid, sys_waitpid, sys_yield,
 };
 
+const SYSCALL_DUP: usize = 24;
+const SYSCALL_PIPE: usize = 59;
 const SYSCALL_CLOSE: usize = 57;
 const SYSCALL_READ: usize = 63;
 const SYSCALL_WRITE: usize = 64;
@@ -39,6 +41,8 @@ const SYSCALL_WAITPID: usize = 260;
 /// 分派一次系统调用。由 [`crate::trap::trap_handler`] 调用。
 pub fn syscall(id: usize, args: [usize; 3]) -> isize {
     match id {
+        SYSCALL_DUP => sys_dup(args[0]),
+        SYSCALL_PIPE => sys_pipe(args[0]),
         SYSCALL_CLOSE => sys_close(args[0]),
         SYSCALL_READ => sys_read(args[0], args[1], args[2]),
         SYSCALL_WRITE => sys_write(args[0], args[1], args[2]),

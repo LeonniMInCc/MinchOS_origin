@@ -97,6 +97,27 @@ impl TaskControlBlockInner {
     pub fn is_zombie(&self) -> bool {
         self.task_status == TaskStatus::Zombie
     }
+
+    /// 找一个空闲的文件描述符槽位，没有就在末尾加一个。
+    ///
+    /// **总是返回最小的可用 fd。** 这不是实现细节，是 POSIX 的硬性要求 ——
+    /// shell 的重定向完全建立在它之上：
+    ///
+    /// ```text
+    ///   close(1);        // 释放 stdout，1 成为最小的空闲号
+    ///   dup(pipe_write); // 于是新的副本必然落在 1 上
+    /// ```
+    ///
+    /// 换成"随便找一个空位"的话，这套几十年来的惯用法就全垮了。
+    pub fn alloc_fd(&mut self) -> usize {
+        match self.fd_table.iter().position(|slot| slot.is_none()) {
+            Some(fd) => fd,
+            None => {
+                self.fd_table.push(None);
+                self.fd_table.len() - 1
+            }
+        }
+    }
 }
 
 impl TaskControlBlock {

@@ -8,16 +8,20 @@
 //!
 //! 但这个抽象是后面几章的地基：
 //!
-//! - 第 11 周：管道也是"文件"，`ls | wc` 靠的就是把 `stdout` 换成管道
+//! - **第 11 周（现在）**：管道也是"文件"。`words | upper` 靠的就是把
+//!   一个进程的 `stdout` 和另一个进程的 `stdin` 换成管道的两端
 //! - 第 13 周：磁盘上的真实文件
 //!
-//! 有了 trait，那两章只要多写一个实现，`sys_read` / `sys_write`
-//! 一行都不用改。这就是 Unix "一切皆文件"那句话的技术含义。
+//! 第 11 周兑现了这个承诺：加了 [`pipe`] 一个模块，
+//! `sys_read` / `sys_write` **一行都没改**。
+//! 这就是 Unix "一切皆文件"那句话的技术含义。
 
+mod pipe;
 mod stdio;
 
 use crate::mm::UserBuffer;
 
+pub use pipe::make_pipe;
 pub use stdio::{Stdin, Stdout};
 
 /// 任何可以被读写的东西。

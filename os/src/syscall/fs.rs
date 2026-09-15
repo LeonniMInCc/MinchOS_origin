@@ -4,8 +4,8 @@
 //! 分派给一个 [`File`] 实现。第 11 周的管道和第 13 周的磁盘文件
 //! 只要多写一个实现，这里一行都不用改。
 
-use crate::fs::File;
-use crate::mm::{translated_byte_buffer, UserBuffer};
+use crate::fs::{make_pipe, File};
+use crate::mm::{translated_byte_buffer, translated_refmut, UserBuffer};
 use crate::task::{current_pid, current_task, current_user_token};
 use alloc::sync::Arc;
 
@@ -113,4 +113,67 @@ pub fn sys_close(fd: usize) -> isize {
             -1
         }
     }
+}
+
+/// `pipe(fds)` —— 造一个管道，把读端和写端的 fd 写进用户给的数组。
+///
+/// `fds` 指向用户空间的一个 `[i32; 2]`：`fds[0]` 是读端，`fds[1]` 是写端。
+/// 顺序是 POSIX 定的，记不住的话可以这么想：和标准输入输出的编号一致
+/// （0 读，1 写）。
+pub fn sys_pipe(fds: usize) -> isize {
+    let Some(task) = current_task() else {
+        return -1;
+    };
+    let token = current_user_token();
+
+    // 先把两个槽位写回用户内存，再占用 fd —— 万一用户给的地址不能写，
+    // 这时候还没有任何副作用可言。
+    let (Some(slot0), Some(slot1)) = (
+        translated_refmut::<i32>(token, fds),
+        translated_refmut::<i32>(token, fds + core::mem::size_of::<i32>()),
+    ) else {
+        error!(
+            "sys_pipe：进程 {} 传来了不可写的数组地址 {:#x}",
+            task.pid(),
+            fds
+        );
+        return -1;
+    };
+
+    let (read_end, write_end) = make_pipe();
+
+    let mut inner = task.inner_exclusive_access();
+    let read_fd = inner.alloc_fd();
+    inner.fd_table[read_fd] = Some(read_end);
+    let write_fd = inner.alloc_fd();
+    inner.fd_table[write_fd] = Some(write_end);
+    drop(inner);
+
+    *slot0 = read_fd as i32;
+    *slot1 = write_fd as i32;
+    0
+}
+
+/// `dup(fd)` —— 复制一个文件描述符，返回新的编号。
+///
+/// 新旧两个 fd 指向**同一个文件对象**（`Arc` 克隆），
+/// 所以它们共享读写位置、共享管道缓冲区。
+///
+/// 新编号总是当前**最小的空闲 fd**。重定向就靠这个性质：
+/// `close(1)` 之后再 `dup(pipe_write)`，新副本必然落在 1 上，
+/// 于是这个进程往"标准输出"写的东西就进了管道 —— 而它自己毫不知情。
+pub fn sys_dup(fd: usize) -> isize {
+    let Some(task) = current_task() else {
+        return -1;
+    };
+    let mut inner = task.inner_exclusive_access();
+
+    let Some(Some(file)) = inner.fd_table.get(fd).cloned() else {
+        error!("sys_dup：进程 {} 复制了一个无效的 fd {}", task.pid(), fd);
+        return -1;
+    };
+
+    let new_fd = inner.alloc_fd();
+    inner.fd_table[new_fd] = Some(file);
+    new_fd as isize
 }

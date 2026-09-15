@@ -19,7 +19,8 @@
 | ✅ 第 8 周 (`v0.8`) | 跳板页、每进程独立地址空间、内核栈 guard page —— **阶段 II 核心完成** |
 | ✅ 第 9 周 (`v0.9`) | 进程树、fork/exec/waitpid、僵尸回收 —— **阶段 II 完成** |
 | ✅ 第 10 周 (`v0.10`) | `File` trait、文件描述符表、`sys_read`、交互式 shell |
-| ⬜ 第 11 周 | 管道与重定向 |
+| ✅ 第 11 周 (`v0.11`) | 匿名管道（环形缓冲 + EOF 检测）、`sys_pipe`/`sys_dup`、shell 支持 `\|` |
+| ⬜ 第 12 周 | virtio-blk 驱动、块缓存 |
 
 完整计划见 [ROADMAP.md](ROADMAP.md)。
 
@@ -88,8 +89,9 @@ ccnuos/
         ├── loader.rs       找出嵌在镜像里的用户程序 ELF
         ├── timer.rs        时钟：time CSR + SBI set_timer，10 ms 时间片
         ├── fs/
-        │   ├── mod.rs      File trait（管道和磁盘文件将复用它）
-        │   └── stdio.rs    标准输入/输出
+        │   ├── mod.rs      File trait（磁盘文件将复用它）
+        │   ├── stdio.rs    标准输入/输出
+        │   └── pipe.rs     匿名管道（环形缓冲区）
         ├── mm/
         │   ├── heap_allocator.rs   伙伴系统分配器 + #[global_allocator]
         │   ├── address.rs          四种地址/页号的 newtype 封装
@@ -111,7 +113,7 @@ ccnuos/
 
 user/                     用户程序（独立 crate）
 ├── src/lib.rs            最小运行库：_start、clear_bss、println!
-└── src/bin/              initproc + user_shell + 12 个用户程序
+└── src/bin/              initproc + user_shell + 16 个用户程序
                           （全部链接到同一个虚拟地址 0x10000）
 
 ```

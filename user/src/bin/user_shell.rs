@@ -1,5 +1,7 @@
 //! CCNUOS 的 shell。
 //!
+//! 第 11 周起它还支持**管道**：`12words | 13upper | 14wc`。
+//!
 //! 一个 shell 本质上只做三件事，而这三件事我们前几周刚好都做完了：
 //!
 //! | 做什么 | 靠什么 |
@@ -24,7 +26,7 @@
 #[macro_use]
 extern crate user_lib;
 
-use user_lib::{exec, fork, getchar, waitpid};
+use user_lib::{close, dup, exec, fork, getchar, pipe, waitpid, STDIN, STDOUT};
 
 const LINE_MAX: usize = 255; // 留一个字节给 exec 需要的 \0
 const CR: u8 = 0x0d; // 回车
@@ -79,25 +81,99 @@ fn prompt() {
     print!("ccnuos> ");
 }
 
-/// 执行一条命令：fork 出子进程去 exec，父进程等它结束。
-fn run_command(cmd: &str) {
-    let pid = fork();
+/// 管道最多支持几级。用固定数组是因为用户库还没有堆分配器。
+const MAX_STAGES: usize = 4;
 
-    if pid == 0 {
-        // ---- 子进程 ----
-        // exec 成功的话地址空间就被换掉了，下面的代码属于旧程序，不会执行
-        exec(cmd);
-        println!("ccnuos: 找不到命令 \"{}\"", cmd);
-        // 用 127 退出，和大多数 shell 对"command not found"的约定一致
-        user_lib::sys_exit(127);
+/// 按 `|` 切开命令行。返回段数，语法有问题返回 `None`。
+fn split_pipeline<'a>(cmd: &'a str, out: &mut [&'a str; MAX_STAGES]) -> Option<usize> {
+    let mut n = 0;
+    for part in cmd.split('|') {
+        let part = part.trim();
+        if part.is_empty() {
+            return None; // "a | | b" 或者 "a |"
+        }
+        if n >= MAX_STAGES {
+            return None;
+        }
+        out[n] = part;
+        n += 1;
+    }
+    if n == 0 {
+        None
+    } else {
+        Some(n)
+    }
+}
+
+/// 执行一条命令（可能是一条管道）。
+fn run_command(cmd: &str) {
+    let mut stages = [""; MAX_STAGES];
+    let Some(n) = split_pipeline(cmd, &mut stages) else {
+        println!("ccnuos: 管道语法错误（最多 {} 级，且每段不能为空）", MAX_STAGES);
+        return;
+    };
+
+    // n 段需要 n-1 个管道
+    let mut pipes = [[0i32; 2]; MAX_STAGES - 1];
+    for p in pipes.iter_mut().take(n.saturating_sub(1)) {
+        if pipe(p) < 0 {
+            println!("ccnuos: 创建管道失败");
+            return;
+        }
+    }
+
+    let mut pids = [0isize; MAX_STAGES];
+
+    for i in 0..n {
+        let pid = fork();
+
+        if pid == 0 {
+            // ---- 子进程：先把自己的 stdin/stdout 接到管道上 ----
+            //
+            // 手法是"关掉再复制"：close(0) 让 0 成为最小的空闲号，
+            // 紧接着 dup 出来的副本必然落在 0 上。这套几十年来的惯用法
+            // 完全建立在"alloc_fd 返回最小空闲号"这条 POSIX 规定上。
+            if i > 0 {
+                close(STDIN);
+                dup(pipes[i - 1][0] as usize);
+            }
+            if i + 1 < n {
+                close(STDOUT);
+                dup(pipes[i][1] as usize);
+            }
+
+            // **必须关掉所有管道 fd 的原始副本。**
+            // 它们已经被 dup 到 0/1 了，留着的话这个进程自己就持有着
+            // 管道的写端，于是下游永远等不到 EOF —— 整条管道死锁。
+            for p in pipes.iter().take(n - 1) {
+                close(p[0] as usize);
+                close(p[1] as usize);
+            }
+
+            exec(stages[i]);
+            println!("ccnuos: 找不到命令 \"{}\"", stages[i]);
+            user_lib::sys_exit(127);
+        }
+
+        pids[i] = pid;
     }
 
     // ---- 父进程（shell 自己）----
-    let mut exit_code: i32 = 0;
-    let reaped = waitpid(pid, &mut exit_code);
+    //
+    // 同样必须关掉自己那份。shell 不参与数据传输，但只要它还握着写端，
+    // 管道就不算"所有写端都关了"，末端的 wc 就会一直等下去。
+    // **这是管道编程里最经典的一个 bug。**
+    for p in pipes.iter().take(n - 1) {
+        close(p[0] as usize);
+        close(p[1] as usize);
+    }
 
-    if exit_code != 0 {
-        println!("[{}] 退出码 {}", reaped, exit_code);
+    for pid in pids.iter().take(n) {
+        let mut exit_code: i32 = 0;
+        waitpid(*pid, &mut exit_code);
+        if exit_code != 0 {
+            println!("[{}] 退出码 {}", pid, exit_code);
+        }
     }
 }
 
@@ -164,8 +240,13 @@ fn print_help() {
         "09bad_address                       访问空地址（会被杀）",
         "10bad_kernel_write                  越权写内核（会被杀）",
         "11forktest                          fork 语义演示",
+        "12words / 13upper / 14wc            管道演示（过滤器）",
+        "15pipetest                          直接用 pipe() 的例子",
     ] {
         println!("  {}", name);
     }
     println!("内置命令：help / exit");
+    println!("支持管道，最多 {} 级，例如：", MAX_STAGES);
+    println!("  12words | 13upper");
+    println!("  12words | 13upper | 14wc");
 }

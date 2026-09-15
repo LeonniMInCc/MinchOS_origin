@@ -147,8 +147,8 @@ pub fn rust_main() -> ! {
     clear_bss();
 
     println!("{}", BANNER);
-    println!("       CCNUOS v0.10.0 — RISC-V 64 (SV39) 教学操作系统");
-    println!("       第十周：文件描述符 / 标准输入 / Shell\n");
+    println!("       CCNUOS v0.11.0 — RISC-V 64 (SV39) 教学操作系统");
+    println!("       第十一周：管道 / shell 的 | 支持\n");
 
     info!("内核已进入 S 态，启动栈可用，.bss 已清零");
     print_memory_layout();

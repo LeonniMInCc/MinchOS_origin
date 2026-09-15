@@ -7,6 +7,8 @@
 
 use core::arch::asm;
 
+const SYSCALL_DUP: usize = 24;
+const SYSCALL_PIPE: usize = 59;
 const SYSCALL_CLOSE: usize = 57;
 const SYSCALL_READ: usize = 63;
 const SYSCALL_WRITE: usize = 64;
@@ -53,6 +55,16 @@ pub fn sys_write(fd: usize, buffer: &[u8]) -> isize {
 /// 串口是裸设备，没有行缓冲。
 pub fn sys_read(fd: usize, buffer: &mut [u8]) -> isize {
     syscall(SYSCALL_READ, [fd, buffer.as_mut_ptr() as usize, buffer.len()])
+}
+
+/// 造一个管道。`fds[0]` 是读端，`fds[1]` 是写端。
+pub fn sys_pipe(fds: &mut [i32; 2]) -> isize {
+    syscall(SYSCALL_PIPE, [fds.as_mut_ptr() as usize, 0, 0])
+}
+
+/// 复制一个文件描述符，返回当前最小的空闲编号。
+pub fn sys_dup(fd: usize) -> isize {
+    syscall(SYSCALL_DUP, [fd, 0, 0])
 }
 
 /// 关闭一个文件描述符。
