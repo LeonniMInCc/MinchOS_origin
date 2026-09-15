@@ -81,7 +81,7 @@ TRACE_HTML := docs/trace.html
 # 第 17 周：课程站点（实验平台的地基）
 COURSE_HTML := docs/index.html
 
-.PHONY: all build run debug gdb clean clean-user fmt clippy asm env check demo trace regress course user fs-img test
+.PHONY: all build run debug gdb clean clean-user fmt clippy asm env check demo trace regress grade course user fs-img test
 
 all: build
 
@@ -166,10 +166,27 @@ course:
 	@python3 tools/build_course.py $(COURSE_HTML)
 	@echo "用浏览器打开：$(CURDIR)/$(COURSE_HTML)"
 
-# 回归测试：把 23 个演示程序全跑一遍，检查输出对不对。
-# 每个用例单独启动一次 QEMU —— 一组挂了不影响其他组的结果。
-regress: build fs-img
-	@python3 tools/regress.py $(QEMU) $(QEMU_ARGS)
+# 判题。判据在 docs/checkpoints.toml，引擎在 tools/checker.py。
+#
+#   make regress          全部章节 —— 拿参考实现验证判据本身没坏
+#   make grade CH=6       只判第 6 章
+#   make grade FORMAT=json  成绩单写进 score.json（CI 用）
+#   make grade V=1        失败时打印实际输出
+#
+# regress 和 grade 是同一个东西的两个方向：前者拿参考实现去判题，
+# 后者拿学生的代码去判题。**判据只有一份**，否则两套一定会漂移。
+CH     ?=
+FORMAT ?= text
+V      ?=
+SCORE  ?= score.json
+GRADE_FLAGS = $(if $(CH),--ch $(CH),) $(if $(V),-v,) \
+              $(if $(filter json,$(FORMAT)),--json --out $(SCORE),)
+
+grade: build fs-img
+	@python3 tools/grade.py $(GRADE_FLAGS) -- $(QEMU) $(QEMU_ARGS)
+
+# 参考实现必须拿满分。不及格时先怀疑判据，再怀疑内核。
+regress: grade
 
 # 挂起在第一条指令，等 GDB 连 localhost:1234
 debug: build fs-img

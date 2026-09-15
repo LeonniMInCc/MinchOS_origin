@@ -15,12 +15,18 @@
 所以平台不新建判题引擎，而是**把回归测试的引擎抽出来复用**：
 
 ```
-tools/checker.py     判题引擎（从 regress.py 抽出来）
-  ├── tools/regress.py    参考实现自检：我的代码还对不对
-  └── tools/grade.py      学生判题：你的代码对不对
+docs/checkpoints.toml   判据的唯一来源
+tools/checker.py        引擎：五种判据 + QEMU 运行缓存
+tools/grade.py          命令行
+  ├── make regress        拿参考实现去判题（= 回归测试）
+  └── make grade CH=6     拿学生的代码去判题
 ```
 
-同一个引擎、同一批判据。参考实现必须能拿满分 —— 这是判题器自身的测试。
+**"回归测试"和"判题"是同一件事的两个方向。**
+参考实现必须能拿满分 —— 这是判题器自身的测试。
+
+> 已实现。第 16 周那个独立的 `tools/regress.py` 随之退休 ——
+> 它的 16 个用例原样搬进了 `checkpoints.toml`。
 
 ---
 
@@ -96,31 +102,36 @@ pub fn frame_alloc() -> Option<FrameTracker> {
 | `selfcheck` | 内核启动自检必须通过 | "无泄漏"、无 panic |
 | `source` | 源码必须/不许包含某模式 | 防止把 `todo!()` 换成硬编码答案 |
 
-清单写成一个文件，和章节并列：
+清单写成一个文件，和章节并列（`docs/checkpoints.toml`）：
 
 ```toml
-[[checkpoint]]
-ch = 6
-name = "物理页帧分配器"
-points = 40
+[meta]
+# 对每一次启动都成立，除非某条判据写了 no_global = true
+global_must     = ["页帧核对", "无泄漏"]
+global_must_not = ["[KERNEL PANIC]", "串口输入缓冲区溢出"]
 
-  [[checkpoint.check]]
-  type = "unit"
-  filter = "frame_allocator"
-  points = 15
+[[chapter]]
+n = 6
+name = "页帧分配器与 SV39 页表"
+tag = "v0.6"
 
-  [[checkpoint.check]]
+  [[chapter.check]]
   type = "selfcheck"
-  must = ["页帧自检通过"]
+  name = "页帧分配/复用/清零/回收均正确"
   points = 15
+  must = ["页帧自检通过：", "分配/复用/清零/回收均正确"]
 
-  [[checkpoint.check]]
+  [[chapter.check]]
   type = "run"
-  commands = ["11forktest"]
-  must = ["页帧核对", "无泄漏"]
-  must_not = ["[KERNEL PANIC]"]
+  name = "全部进程退出后页帧数与启动前一致"
   points = 10
+  commands = ["11forktest", "19philosophers"]
+  must = ["完全一致，无泄漏"]
 ```
+
+**不计分的门槛判据**（`points = 0`）用来堵作弊：留 `todo!()`、
+把测试标 `#[ignore]`、删断言。它们不影响分数，但**失败就整体不通过** ——
+这两件事必须分开算，见下一节那个踩到的坑。
 
 `must` / `must_not` 这套是第 16 周就验证过的 —— 而且
 **`must_not` 是更值钱的一半**：那些"坏"程序自己会喊
@@ -132,21 +143,11 @@ points = 40
 
 学生 push 到自己的分支 → CI 跑 `make grade` → 结果回写成 PR 评论。
 
-```yaml
-# .github/workflows/grade.yml
-on: [push, pull_request]
-jobs:
-  grade:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - run: sudo apt-get install -y qemu-system-misc
-      - run: rustup target add riscv64gc-unknown-none-elf
-      - run: make grade CH=${{ ... }} FORMAT=json > score.json
-      - uses: actions/upload-artifact@v4
-        with: { name: scorecard, path: score.json }
-```
+见 [`.github/workflows/grade.yml`](../.github/workflows/grade.yml)。
+装 QEMU 和工具链、跑 `make grade FORMAT=json`、把成绩单贴进
+GitHub 的 job summary、失败的判据折叠成可展开的详情。
+
+**选 CI 而不是自建服务的三个理由：**
 
 **选 CI 而不是自建服务的三个理由：**
 
@@ -157,6 +158,25 @@ jobs:
 3. **学生顺便学会了 CI。** 这本身就是该学的东西。
 
 代价是判题环境由托管平台决定，跑得比本机慢。可以接受 —— 一次判题约 3 分钟。
+
+### 判据必须证明它会失败
+
+判题器写完当天就被自己的变异测试抓到两个 bug：
+
+| 变异 | 本该 | 实际 |
+|---|---|---|
+| 源码里留一个 `todo!()` | 整体不通过 | 判据红了，**总分仍是 100%，CI 判通过** |
+| 删掉关机时的 `sync_all_blocks()` 调用 | 判据失败 | **照样通过** —— 函数名在文档注释里出现了 |
+
+第一个的根因是把"满分"和"通过"当成了一回事：门槛判据值 0 分，
+失败也是 0/0，`earned == total` 依然成立。**分数和判定必须分开算。**
+
+第二个的根因是源码判据 grep 全文。**注释里说做了，不等于代码里做了** ——
+学生写一行 `// sync_all_blocks` 就能骗过去。修法是匹配前先剥掉注释
+（保留字符串字面量）。
+
+> 一条从来不会失败的判据没有价值。
+> **每加一条判据，都要顺手证明它能红。**
 
 ---
 
@@ -197,11 +217,11 @@ jobs:
 
 | 步骤 | 产出 | 工作量 |
 |---|---|---|
-| 1 | `tools/checker.py`：从 `regress.py` 抽出引擎 | 小 |
-| 2 | `docs/checkpoints.toml`：16 章的判据清单 | 中 |
-| 3 | `tools/grade.py` + `make grade` | 小 |
+| ~~1~~ | ~~`tools/checker.py`：抽出引擎~~ | **已完成** |
+| ~~2~~ | ~~`docs/checkpoints.toml`：16 章的判据清单~~ | **已完成，465 分** |
+| ~~3~~ | ~~`tools/grade.py` + `make grade`~~ | **已完成** |
 | 4 | `tools/make_skeleton.py` + 各章 `-start` tag | **大** |
-| 5 | CI workflow | 小 |
+| ~~5~~ | ~~CI workflow~~ | **已完成** |
 | 6 | 站点接成绩回显 | 中 |
 
 **第 4 步是真正的大活** —— 16 章的骨架要挖得恰到好处：

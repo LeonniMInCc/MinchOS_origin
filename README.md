@@ -74,7 +74,8 @@ ccnuos> 18ls
 
 ```bash
 make test           # 文件系统单元测试（宿主机，不需要 QEMU，0.01 秒）
-make regress        # 端到端回归测试：23 个演示程序全跑一遍（约 2 分钟）
+make regress        # 拿参考实现跑一遍全部判据（约 2 分钟，必须满分）
+make grade CH=6     # 只判第 6 章
 make check          # 快速类型检查
 make asm            # 反汇编内核，看生成了什么代码
 make demo           # 录一次启动，生成可在浏览器回放的单文件 HTML
@@ -172,7 +173,8 @@ tools/                    宿主机侧工具，不进内核镜像
 ├── ansi2html.py          串口输出 → 可回放的 HTML（make demo）
 ├── build_course.py       章节 markdown → 单文件课程站点（make course）
 ├── trace2html.py         结构化事件 → 四张可视化图（make trace）
-└── regress.py            端到端回归测试（make regress）
+├── checker.py            判题引擎（五种判据）
+├── grade.py              按 docs/checkpoints.toml 判题（make grade / make regress）
 ```
 
 ## 设计取舍
