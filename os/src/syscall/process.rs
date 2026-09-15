@@ -4,7 +4,7 @@ use crate::fs::read_file;
 use crate::mm::{translated_refmut, translated_str};
 use crate::task::{
     current_pid, current_user_token, exec_current, exit_current_and_run_next, fork_current,
-    suspend_current_and_run_next, wait_child,
+    suspend_current_and_run_next, wait_child_blocking,
 };
 use crate::timer::get_time_ms;
 
@@ -86,15 +86,13 @@ pub fn sys_exec(path_ptr: usize) -> isize {
 /// - `pid < 0` 表示"等任意一个子进程"
 /// - 返回被回收的子进程 PID
 /// - 返回 **-1**：根本没有这个子进程
-/// - 返回 **-2**：有，但还没退出（调用方应该 yield 之后重试）
 ///
-/// 为什么不直接在内核里阻塞等待？因为还没有等待队列 —— 那是第 14 章的事。
-/// 现在让用户库循环 `yield` 重试，语义一样，只是浪费些 CPU。
+/// **第 14 周起它会真正阻塞**。之前返回 -2 让用户库循环 `yield` 重试，
+/// 那是没有等待队列时的权宜之计。
 pub fn sys_waitpid(pid: isize, exit_code_ptr: usize) -> isize {
-    match wait_child(pid) {
+    match wait_child_blocking(pid) {
         Err(()) => -1,
-        Ok(None) => -2,
-        Ok(Some((child_pid, exit_code))) => {
+        Ok((child_pid, exit_code)) => {
             // 用户可能传 0 表示"不关心退出码"
             if exit_code_ptr != 0 {
                 let token = current_user_token();

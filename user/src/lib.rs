@@ -98,6 +98,69 @@ pub fn listdir(buf: &mut [u8]) -> isize {
     sys_listdir(buf)
 }
 
+// ---------------------------------------------------------------------------
+// 同步原语
+// ---------------------------------------------------------------------------
+
+/// 一把系统级的互斥锁。`fork` 之后子进程继承 `id` 这个普通整数即可共用。
+#[derive(Clone, Copy)]
+pub struct Mutex(usize);
+
+impl Mutex {
+    pub fn create() -> Self {
+        Self(syscall::sys_mutex_create() as usize)
+    }
+    pub fn id(&self) -> usize {
+        self.0
+    }
+    pub fn lock(&self) {
+        syscall::sys_mutex_lock(self.0);
+    }
+    pub fn unlock(&self) {
+        syscall::sys_mutex_unlock(self.0);
+    }
+}
+
+/// 计数信号量。
+#[derive(Clone, Copy)]
+pub struct Semaphore(usize);
+
+impl Semaphore {
+    pub fn create(initial: usize) -> Self {
+        Self(syscall::sys_semaphore_create(initial) as usize)
+    }
+    /// P：取一张票，没票就阻塞。
+    pub fn down(&self) {
+        syscall::sys_semaphore_down(self.0);
+    }
+    /// V：还一张票。
+    pub fn up(&self) {
+        syscall::sys_semaphore_up(self.0);
+    }
+}
+
+/// 条件变量。必须和一把互斥锁配合使用。
+#[derive(Clone, Copy)]
+pub struct Condvar(usize);
+
+impl Condvar {
+    pub fn create() -> Self {
+        Self(syscall::sys_condvar_create() as usize)
+    }
+    /// 放开锁、睡下；醒来后重新上锁。
+    ///
+    /// **调用方必须用 `while` 重新检查条件** —— 被唤醒不等于条件成立。
+    pub fn wait(&self, mutex: &Mutex) {
+        syscall::sys_condvar_wait(self.0, mutex.id());
+    }
+    pub fn signal(&self) {
+        syscall::sys_condvar_signal(self.0);
+    }
+    pub fn broadcast(&self) {
+        syscall::sys_condvar_broadcast(self.0);
+    }
+}
+
 /// 复制一个文件描述符，返回当前**最小的空闲编号**。
 ///
 /// 重定向就靠这个性质：`close(1)` 之后再 `dup(x)`，

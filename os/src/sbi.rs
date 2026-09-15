@@ -21,8 +21,6 @@ use core::arch::asm;
 
 /// Legacy 扩展：向串口写一个字符。
 const EID_LEGACY_CONSOLE_PUTCHAR: usize = 0x01;
-/// Legacy 扩展：从串口读一个字符。
-const EID_LEGACY_CONSOLE_GETCHAR: usize = 0x02;
 /// Legacy 扩展：关机。作为 SRST 不可用时的兜底。
 const EID_LEGACY_SHUTDOWN: usize = 0x08;
 /// SRST 扩展 ("SRST" 的 ASCII)：系统复位/关机。
@@ -59,23 +57,14 @@ pub fn console_putchar(c: usize) {
     sbi_call(EID_LEGACY_CONSOLE_PUTCHAR, 0, c, 0, 0);
 }
 
-/// 从 SBI 串口读一个字符。没有输入时返回 `None`。
-///
-/// **它不会阻塞。** SBI 没有"等到有输入为止"这种接口 —— 固件只是看一眼
-/// 串口寄存器，有就给，没有就返回 -1。所以"等一个字符"这件事必须由内核
-/// 自己实现：反复调用它，中间让出 CPU（见 `fs::Stdin::read`）。
-///
-/// 这也是为什么第 10 周非得有进程调度不可：没有别的进程可跑的话，
-/// "等输入"就只能空转烧 CPU。
-pub fn console_getchar() -> Option<u8> {
-    let (ret, _) = sbi_call(EID_LEGACY_CONSOLE_GETCHAR, 0, 0, 0, 0);
-    // legacy getchar 用返回值本身传数据：-1 表示没有输入
-    if ret as isize == -1 {
-        None
-    } else {
-        Some(ret as u8)
-    }
-}
+// 第 14 周起输入不再走 SBI。
+//
+// SBI 的 `console_getchar` 是非阻塞的"看一眼"接口，内核只能轮询取字符，
+// 两次轮询之间到达的字符会丢（第 10 章实测过：粘贴长命令会缺字母）。
+// 现在内核直接驱动 16550 串口并打开接收中断，见 `drivers::uart`。
+//
+// 输出仍然走 SBI —— 那边是同步的，没有丢数据的问题，
+// 而且省掉了一个发送驱动。
 
 /// 设定下一次时钟中断的触发时刻（以 `time` 计数器的绝对值表示）。
 ///

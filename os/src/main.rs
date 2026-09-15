@@ -186,8 +186,8 @@ pub fn rust_main() -> ! {
     clear_bss();
 
     println!("{}", BANNER);
-    println!("       CCNUOS v0.13.0 — RISC-V 64 (SV39) 教学操作系统");
-    println!("       第十三周：文件系统 / 程序从磁盘加载\n");
+    println!("       CCNUOS v0.14.0 — RISC-V 64 (SV39) 教学操作系统");
+    println!("       第十四周：阻塞与唤醒 / 同步原语 / 中断驱动的输入\n");
 
     info!("内核已进入 S 态，启动栈可用，.bss 已清零");
     print_memory_layout();
@@ -203,6 +203,8 @@ pub fn rust_main() -> ! {
 
     trap::init();
     trap::enable_timer_interrupt();
+    trap::enable_external_interrupt();
+    drivers::uart::init();
     timer::set_next_trigger(); // 上好第一次闹钟，之后由 trap_handler 续期
 
     // 记下用户态启动前的页帧用量，退出时核对有没有泄漏

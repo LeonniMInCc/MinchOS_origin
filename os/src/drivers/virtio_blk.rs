@@ -58,8 +58,11 @@ const MMIO_BASE: usize = 0x1000_1000;
 const MMIO_STRIDE: usize = 0x1000;
 const MMIO_SLOTS: usize = 8;
 
-/// MMIO 区域的总范围，内核地址空间要把它映射进来。
-pub const MMIO_REGION: (usize, usize) = (MMIO_BASE, MMIO_BASE + MMIO_SLOTS * MMIO_STRIDE);
+/// 需要映射进内核地址空间的 MMIO 区域。
+///
+/// 从 `0x10000000` 开始 —— 比 virtio 的第一个槽位早一页，
+/// 因为 16550 串口就在那里（见 `drivers::uart`）。
+pub const MMIO_REGION: (usize, usize) = (0x1000_0000, MMIO_BASE + MMIO_SLOTS * MMIO_STRIDE);
 
 const MAGIC: usize = 0x000;
 const VERSION: usize = 0x004;

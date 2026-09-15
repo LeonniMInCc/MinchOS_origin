@@ -46,6 +46,9 @@ pub use processor::{
     take_current_task,
 };
 
+/// 一个进程的句柄。等待队列里存的就是它。
+pub type TaskHandle = Arc<TaskControlBlock>;
+
 /// 所有孤儿进程的收养人。
 ///
 /// Unix 里它是 pid 1（`init`）。这里是 pid 0，因为我们的 PID 从 0 开始分配。
@@ -99,6 +102,74 @@ pub fn suspend_current_and_run_next() {
     schedule(task_cx_ptr);
 }
 
+/// 当前处于阻塞状态的进程数。
+///
+/// 只有一个用途，但很重要：idle 发现就绪队列空了时，要能区分
+/// **"活干完了"** 和 **"所有人都卡在互相等待上"**。
+/// 没有这个计数的话，一次死锁会表现成"系统正常关机"—— 最糟的失败方式。
+static BLOCKED_COUNT: UPSafeCell<usize> = unsafe { UPSafeCell::new(0) };
+
+pub fn blocked_count() -> usize {
+    *BLOCKED_COUNT.exclusive_access()
+}
+
+/// 其中有多少是在等 I/O（而不是在等别的进程）。
+static IO_BLOCKED_COUNT: UPSafeCell<usize> = unsafe { UPSafeCell::new(0) };
+
+pub fn io_blocked_count() -> usize {
+    *IO_BLOCKED_COUNT.exclusive_access()
+}
+
+/// 阻塞当前进程，并标记"它在等 I/O"。
+///
+/// 和 [`block_current_and_run_next`] 的唯一区别是多记一个数。
+/// 这个数让 idle 能分清"死锁"和"等硬件" —— 前者该报错，后者该睡着等。
+pub fn block_current_on_io() {
+    *IO_BLOCKED_COUNT.exclusive_access() += 1;
+    block_current_and_run_next();
+    // 能回到这里说明已经被唤醒了
+    *IO_BLOCKED_COUNT.exclusive_access() -= 1;
+}
+
+/// 阻塞当前进程，切回 idle。**不会**把它放回就绪队列。
+///
+/// 这是 [`suspend_current_and_run_next`] 的孪生兄弟，差别只有一处：
+/// 那个把自己放回队尾（还想跑），这个不放（在等事件）。
+///
+/// 调用方必须**先**把自己挂进某个等待队列，否则就再也没人能唤醒它了。
+/// 见 [`crate::sync::wait_on`]。
+pub fn block_current_and_run_next() {
+    let task = take_current_task().expect("没有当前进程");
+
+    let task_cx_ptr = {
+        let mut inner = task.inner_exclusive_access();
+        inner.task_status = TaskStatus::Blocked;
+        &raw mut inner.task_cx
+    };
+
+    *BLOCKED_COUNT.exclusive_access() += 1;
+
+    // 注意这里**不**调 add_task —— 这正是阻塞和让出的全部区别。
+    // 进程的 Arc 此刻只被等待队列持有着。
+    drop(task);
+    schedule(task_cx_ptr);
+}
+
+/// 唤醒一个阻塞的进程：标记就绪，放回队尾。
+pub fn wakeup_task(task: TaskHandle) {
+    {
+        let mut inner = task.inner_exclusive_access();
+        debug_assert_eq!(
+            inner.task_status,
+            TaskStatus::Blocked,
+            "唤醒了一个没有在阻塞的进程"
+        );
+        inner.task_status = TaskStatus::Ready;
+    }
+    *BLOCKED_COUNT.exclusive_access() -= 1;
+    add_task(task);
+}
+
 /// 结束当前进程。永不返回。
 pub fn exit_current_and_run_next(exit_code: i32) -> ! {
     let task = take_current_task().expect("没有当前进程");
@@ -135,6 +206,20 @@ pub fn exit_current_and_run_next(exit_code: i32) -> ! {
         inner.memory_set.recycle_data_pages();
     }
 
+    // 唤醒正在 waitpid 的父进程。
+    //
+    // 第 9 周这里什么都不用做 —— 父进程在忙等重试，迟早会自己发现。
+    // 现在父进程是真睡着的，必须有人叫醒它，否则整个系统会停在
+    // "就绪队列空了但还有进程活着"的状态上。
+    if let Some(parent) = task
+        .inner_exclusive_access()
+        .parent
+        .as_ref()
+        .and_then(|w| w.upgrade())
+    {
+        crate::sync::notify_all(&parent.child_waiters);
+    }
+
     // 这里只是放掉"当前进程"这一个引用。父进程的 children 里还握着一份，
     // 所以 PCB 不会现在就消失 —— 它要等 waitpid。
     drop(task);
@@ -146,13 +231,33 @@ pub fn exit_current_and_run_next(exit_code: i32) -> ! {
     unreachable!("僵尸进程不应该被重新调度")
 }
 
-/// `waitpid` 的内核实现。
+/// `waitpid` 的内核实现。**会阻塞**直到有子进程退出。
 ///
-/// - `pid < 0`：等任意一个子进程
-/// - `Ok(Some((pid, exit_code)))`：回收成功
-/// - `Ok(None)`：有这个子进程，但还没退出
+/// 第 9 周它返回 -2 让用户库循环 `yield` 重试 —— 那时没有等待队列，
+/// 只能这样。现在改成真正的阻塞：没有僵尸子进程就把自己挂进
+/// `child_waiters` 睡下，由退出的子进程负责唤醒。
+///
+/// - `Ok((pid, exit_code))`：回收成功
 /// - `Err(())`：根本没有这个子进程
-pub fn wait_child(pid: isize) -> Result<Option<(usize, i32)>, ()> {
+pub fn wait_child_blocking(pid: isize) -> Result<(usize, i32), ()> {
+    loop {
+        match try_wait_child(pid)? {
+            Some(result) => return Ok(result),
+            None => {
+                // 有子进程但都还活着。挂进自己的等待队列然后睡下。
+                //
+                // 用 `loop` 而不是 `if`：被唤醒只说明"某个子进程退出了"，
+                // 未必是我们等的那一个（`waitpid(特定 pid)` 的情况）。
+                // 这和条件变量要求 `while` 重新检查条件是同一个道理。
+                let task = current_task().expect("没有当前进程");
+                crate::sync::wait_on(&task.child_waiters);
+            }
+        }
+    }
+}
+
+/// 查一次，不阻塞。
+fn try_wait_child(pid: isize) -> Result<Option<(usize, i32)>, ()> {
     let task = current_task().expect("没有当前进程");
     let mut inner = task.inner_exclusive_access();
 

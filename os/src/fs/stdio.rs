@@ -2,8 +2,8 @@
 
 use super::File;
 use crate::mm::UserBuffer;
-use crate::sbi::console_getchar;
-use crate::task::suspend_current_and_run_next;
+use crate::drivers::uart;
+use crate::sync::wait_on_io;
 
 /// 标准输入（fd 0）。
 pub struct Stdin;
@@ -22,43 +22,33 @@ impl File for Stdin {
 
     /// 读一个字符。**会阻塞到真的有输入为止。**
     ///
-    /// # "阻塞"是怎么实现的
+    /// # 第 14 周：从轮询改成了真正的阻塞
     ///
-    /// SBI 的 `console_getchar` 不阻塞：有就给，没有就返回 -1。
-    /// 所以"等"这件事只能自己做 —— 反复问，问不到就 `yield` 让别人先跑：
+    /// 第 10–13 周的实现是忙等：反复问 SBI "有字符吗"，没有就 `yield`。
+    /// 那有两个真实代价 —— 等待的进程白烧时间片，而且**两次轮询之间到达
+    /// 的字符会丢**（第 10 章实测到过：粘贴长命令会缺字母）。
     ///
-    /// ```text
-    ///   loop {
-    ///       有字符？ → 返回
-    ///       没有   → suspend_current_and_run_next()
-    ///   }
-    /// ```
-    ///
-    /// 这是**忙等**：没有输入时，这个进程每被调度到一次就白跑一次。
-    /// 真正该做的是把进程挂进一个等待队列，等串口中断来了再唤醒 ——
-    /// 那需要外部中断和等待队列，是第 14 章的事。
-    ///
-    /// 在那之前，忙等是可接受的：反正调度器总会把 CPU 分给别的进程，
-    /// 只是浪费掉本该属于这个进程的那些时间片。
+    /// 现在串口收到字符会产生中断，内核在中断处理程序里把它存进环形
+    /// 缓冲区并唤醒等待者。没有输入时，进程从调度器视野里彻底消失。
     ///
     /// # 为什么一次只读一个字符
     ///
-    /// 串口是"裸"设备，没有行缓冲的概念。shell 需要逐字符处理
-    /// （回显、退格），所以这里也按一次一个来，语义最简单。
-    /// 这相当于终端的 raw 模式。
+    /// 串口是"裸"设备，没有行缓冲。shell 要逐字符处理（回显、退格），
+    /// 所以这里也按一次一个来，语义最简单。相当于终端的 raw 模式。
     fn read(&self, mut buf: UserBuffer) -> Option<usize> {
         if buf.is_empty() {
             return Some(0);
         }
 
         let ch = loop {
-            match console_getchar() {
-                Some(c) => break c,
-                // 没有输入。注意这里能安全地让出 CPU，是因为调用方
-                // （sys_read）已经把进程控制块的借用释放掉了 ——
-                // 否则切换任务时会撞上 RefCell 的重复借用。
-                None => suspend_current_and_run_next(),
+            if let Some(c) = uart::try_getchar() {
+                break c;
             }
+            // 缓冲区空。挂进等待队列然后睡下 —— 串口中断会叫醒我们。
+            //
+            // 用 `loop` 而不是 `if`：被唤醒只说明"来字符了"，
+            // 未必轮得到我们（可能有别的进程先取走了）。
+            wait_on_io(uart::reader_queue());
         };
 
         *buf.bytes_mut().next()? = ch;

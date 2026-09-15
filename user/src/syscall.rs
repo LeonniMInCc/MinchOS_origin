@@ -10,6 +10,16 @@ use core::arch::asm;
 const SYSCALL_DUP: usize = 24;
 const SYSCALL_OPEN: usize = 56;
 const SYSCALL_LISTDIR: usize = 1000;
+const SYSCALL_MUTEX_CREATE: usize = 1010;
+const SYSCALL_MUTEX_LOCK: usize = 1011;
+const SYSCALL_MUTEX_UNLOCK: usize = 1012;
+const SYSCALL_SEM_CREATE: usize = 1020;
+const SYSCALL_SEM_DOWN: usize = 1021;
+const SYSCALL_SEM_UP: usize = 1022;
+const SYSCALL_CONDVAR_CREATE: usize = 1030;
+const SYSCALL_CONDVAR_WAIT: usize = 1031;
+const SYSCALL_CONDVAR_SIGNAL: usize = 1032;
+const SYSCALL_CONDVAR_BROADCAST: usize = 1033;
 const SYSCALL_PIPE: usize = 59;
 const SYSCALL_CLOSE: usize = 57;
 const SYSCALL_READ: usize = 63;
@@ -134,4 +144,43 @@ pub fn sys_waitpid(pid: isize, exit_code: *mut i32) -> isize {
 pub fn sys_exit(exit_code: i32) -> ! {
     syscall(SYSCALL_EXIT, [exit_code as usize, 0, 0]);
     unreachable!("sys_exit 之后不该还在运行")
+}
+
+// ---------------------------------------------------------------------------
+// 同步原语
+// ---------------------------------------------------------------------------
+//
+// 这些不是 POSIX。CCNUOS 没有线程，所以互斥锁/信号量/条件变量做成了
+// 系统级的内核对象，用整数 ID 引用 —— 更接近 System V 信号量。
+// 好处是可以跨进程用（`fork` 之后子进程继承 ID 这个普通整数即可）。
+
+pub fn sys_mutex_create() -> isize {
+    syscall(SYSCALL_MUTEX_CREATE, [0, 0, 0])
+}
+pub fn sys_mutex_lock(id: usize) -> isize {
+    syscall(SYSCALL_MUTEX_LOCK, [id, 0, 0])
+}
+pub fn sys_mutex_unlock(id: usize) -> isize {
+    syscall(SYSCALL_MUTEX_UNLOCK, [id, 0, 0])
+}
+pub fn sys_semaphore_create(initial: usize) -> isize {
+    syscall(SYSCALL_SEM_CREATE, [initial, 0, 0])
+}
+pub fn sys_semaphore_down(id: usize) -> isize {
+    syscall(SYSCALL_SEM_DOWN, [id, 0, 0])
+}
+pub fn sys_semaphore_up(id: usize) -> isize {
+    syscall(SYSCALL_SEM_UP, [id, 0, 0])
+}
+pub fn sys_condvar_create() -> isize {
+    syscall(SYSCALL_CONDVAR_CREATE, [0, 0, 0])
+}
+pub fn sys_condvar_wait(condvar: usize, mutex: usize) -> isize {
+    syscall(SYSCALL_CONDVAR_WAIT, [condvar, mutex, 0])
+}
+pub fn sys_condvar_signal(id: usize) -> isize {
+    syscall(SYSCALL_CONDVAR_SIGNAL, [id, 0, 0])
+}
+pub fn sys_condvar_broadcast(id: usize) -> isize {
+    syscall(SYSCALL_CONDVAR_BROADCAST, [id, 0, 0])
 }

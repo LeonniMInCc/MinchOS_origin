@@ -275,6 +275,10 @@ fn print_help() {
         "16cat                               读磁盘文件 readme.txt",
         "17write                             写磁盘文件 readme.txt",
         "18ls                                列出根目录",
+        "19philosophers                      哲学家就餐（互斥锁）",
+        "20semaphore                         信号量强制执行顺序",
+        "21condvar                           条件变量",
+        "22deadlock                          故意死锁（内核会报错）",
     ] {
         println!("  {}", name);
     }

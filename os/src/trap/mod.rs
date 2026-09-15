@@ -104,6 +104,16 @@ pub fn enable_timer_interrupt() {
     );
 }
 
+/// 打开外部中断（PLIC 转发来的设备中断）。
+///
+/// 第 14 周新增。有了它，串口输入才能从"轮询"变成"硬件通知"。
+pub fn enable_external_interrupt() {
+    // SAFETY: 只置位 SEIE，不改动 sie 的其他位。
+    unsafe {
+        sie::write(sie::read() | sie_bits::SEIE);
+    }
+}
+
 /// 内核自己触发 trap 时的处理：没有恢复的可能，打印现场后停机。
 ///
 /// 内核态的 trap 几乎总是编程错误（解引用了空指针、访问了没映射的地址、
@@ -168,6 +178,20 @@ pub fn trap_handler() -> ! {
             // 注意这里**不动 sepc**。中断和 `ecall` 不同：被打断的那条
             // 指令还没执行完，任务恢复时要重新执行它。
             suspend_current_and_run_next();
+        }
+
+        // --- 外部中断：某个设备有事了 ---
+        Trap::Interrupt(Interrupt::SupervisorExternal) => {
+            // 认领 → 处理 → 完成。少了最后一步，这个中断源就再也不会响了。
+            let irq = crate::drivers::plic::claim();
+            if irq == crate::drivers::plic::IRQ_UART0 {
+                crate::drivers::uart::handle_interrupt();
+            } else if irq != 0 {
+                warn!("收到未处理的外部中断 {}", irq);
+            }
+            if irq != 0 {
+                crate::drivers::plic::complete(irq);
+            }
         }
 
         // --- 访存错误：用户程序碰了不该碰的地址 ---

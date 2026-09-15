@@ -28,17 +28,17 @@ if [ -z "$INPUT" ]; then
 else
     [ -r "$INPUT" ] || { echo "[capture] 读不到输入文件 $INPUT" >&2; exit 1; }
 
-    # **必须按行慢喂。** 直接 `qemu < file` 会把整个文件一次性推进串口，
-    # 而客户机是逐字符轮询取的（SBI 没有阻塞式读接口），来不及消费的
-    # 字符就丢了 —— 症状是命令缺字母，比如 "help" 变成 "elp"。
+    # 等内核启动完再喂。
     #
-    # 先等内核启动完，再一行一行喂，每行之间留出执行时间。
+    # 第 10-13 周这里还必须**按行慢喂**：那时内核靠轮询取串口字符，
+    # 一次性灌进去会丢字母（"help" 变成 "elp"）。第 14 周把输入改成
+    # 中断驱动 + 256 字节环形缓冲之后，一次性灌入六条命令也一个字符不丢，
+    # 那个变通就删掉了。
+    #
+    # **工具里的变通消失，本身就是内核真的修好了的证据。**
     {
-        sleep "${CCNUOS_BOOT_WAIT:-2}"
-        while IFS= read -r cmd; do
-            printf '%s\n' "$cmd"
-            sleep "${CCNUOS_LINE_DELAY:-1}"
-        done < "$INPUT"
+        sleep "${CCNUOS_BOOT_WAIT:-3}"
+        cat "$INPUT"
     } | "$@" > "$LOG" 2>&1 &
     QPID=$!
 fi

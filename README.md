@@ -22,7 +22,8 @@
 | ✅ 第 11 周 (`v0.11`) | 匿名管道（环形缓冲 + EOF 检测）、`sys_pipe`/`sys_dup`、shell 支持 `\|` |
 | ✅ 第 12 周 (`v0.12`) | `easy-fs` 独立 crate（宿主机可测）、virtio-blk 驱动、块缓存 |
 | ✅ 第 13 周 (`v0.13`) | inode/目录/`open`/`>` 重定向，程序改从磁盘加载 —— **阶段 III 完成** |
-| ⬜ 第 14 周 | 同步原语：互斥锁、信号量、条件变量 |
+| ✅ 第 14 周 (`v0.14`) | 阻塞/唤醒、互斥锁·信号量·条件变量、死锁检测、中断驱动的串口输入 |
+| ⬜ 第 15 周 | 教学可视化 |
 
 完整计划见 [ROADMAP.md](ROADMAP.md)。
 
@@ -94,12 +95,19 @@ ccnuos/
         ├── console.rs      print! / println!
         ├── logging.rs      分级彩色日志
         ├── lang_items.rs   panic handler
-        ├── sync.rs         UPSafeCell：单核下的内部可变性
         ├── csr.rs          RISC-V 控制状态寄存器访问
         ├── loader.rs       找出嵌在镜像里的用户程序 ELF
         ├── timer.rs        时钟：time CSR + SBI set_timer，10 ms 时间片
         ├── drivers/
-        │   └── virtio_blk.rs  第一个真正的设备驱动（virtqueue + 轮询）
+        │   ├── virtio_blk.rs  第一个真正的设备驱动（virtqueue + 轮询）
+        │   ├── plic.rs        平台级中断控制器
+        │   └── uart.rs        中断驱动的串口输入 + 环形缓冲
+        ├── sync/
+        │   ├── up.rs          UPSafeCell
+        │   ├── wait_queue.rs  等待队列（本周的真正核心）
+        │   ├── mutex.rs       阻塞式互斥锁
+        │   ├── semaphore.rs   计数信号量
+        │   └── condvar.rs     条件变量
         ├── fs/
         │   ├── mod.rs      File trait（三个实现共用同一组动词）
         │   ├── stdio.rs    标准输入/输出
@@ -126,7 +134,7 @@ ccnuos/
 
 user/                     用户程序（独立 crate）
 ├── src/lib.rs            最小运行库：_start、clear_bss、println!
-└── src/bin/              initproc + user_shell + 19 个用户程序
+└── src/bin/              initproc + user_shell + 23 个用户程序
                           （全部链接到同一个虚拟地址 0x10000）
 
 

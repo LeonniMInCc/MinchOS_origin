@@ -368,6 +368,8 @@ impl MemorySet {
         // 去访问，所以同样得在页表里有映射。恒等映射 + R|W，不带 X 也不带 U。
         let (mmio_start, mmio_end) = crate::drivers::MMIO_REGION;
         add("MMIO 设备寄存器", mmio_start, mmio_end, r | w);
+        let (plic_start, plic_end) = crate::drivers::PLIC_REGION;
+        add("PLIC 中断控制器", plic_start, plic_end, r | w);
 
         // 跳板页。内核地址空间也要映射它：trap_return 里那条
         // `jr restore_va` 是在内核地址空间里执行的。

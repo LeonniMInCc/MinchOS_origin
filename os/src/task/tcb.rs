@@ -5,7 +5,7 @@ use super::pid::{pid_alloc, KernelStack, PidHandle};
 use crate::config::TRAP_CONTEXT;
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{kernel_token, MemorySet, PhysPageNum, VirtAddr};
-use crate::sync::UPSafeCell;
+use crate::sync::{UPSafeCell, WaitQueue};
 use crate::trap::TrapContext;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
@@ -18,6 +18,15 @@ pub enum TaskStatus {
     Ready,
     /// 正在 CPU 上运行
     Running,
+    /// **阻塞**：在等某件事发生，不在就绪队列里。
+    ///
+    /// 和 `Ready` 的区别是关键的：`Ready` 的任务调度器会轮到它，
+    /// `Blocked` 的任务**调度器根本看不见** —— 只有别人显式唤醒它，
+    /// 它才会重新回到就绪队列。
+    ///
+    /// 第 14 周之前没有这个状态，于是"等待"只能靠不停 yield 轮询
+    /// （见 `Stdin::read` 和 `waitpid`），白白烧掉本该属于自己的时间片。
+    Blocked,
     /// **僵尸**：已经执行完毕，但父进程还没把它的退出码取走。
     ///
     /// 为什么要有这个状态？因为退出码是给父进程看的。如果进程一 `exit`
@@ -49,6 +58,23 @@ pub struct TaskControlBlock {
     pub pid: PidHandle,
     pub kernel_stack: KernelStack,
 
+    /// 等着**这个进程的子进程退出**的那些进程（实际上只可能是它自己）。
+    ///
+    /// `waitpid` 发现子进程还活着时，就把自己挂进来然后阻塞；
+    /// 子进程退出时唤醒。第 9 周那个"返回 -2 让用户库循环重试"的
+    /// 权宜之计到这里退休了。
+    ///
+    /// # 为什么它在"不可变部分"而不是 `inner` 里
+    ///
+    /// [`WaitQueue`] 自己就带内部可变性，不需要外层那道 `RefCell`。
+    /// 更重要的是：唤醒一个等待者要访问**它的** `inner`，
+    /// 而等待者很可能就是这个进程自己。如果队列藏在 `inner` 里，
+    /// "取出队列"和"唤醒等待者"就会同时借用同一个 `RefCell` —— 当场 panic。
+    ///
+    /// 这个坑真实踩过一次。教训是：**能不放进锁里的东西就别放进去**，
+    /// 尤其是那些本身就是同步设施的东西。
+    pub child_waiters: WaitQueue,
+
     // ---- 会变的部分 ----
     inner: UPSafeCell<TaskControlBlockInner>,
 }
@@ -74,6 +100,7 @@ pub struct TaskControlBlockInner {
 
     /// 退出码。只在 [`TaskStatus::Zombie`] 状态下有意义。
     pub exit_code: i32,
+
 
     /// 文件描述符表。下标就是 fd，`None` 表示这个槽位空着。
     ///
@@ -145,6 +172,7 @@ impl TaskControlBlock {
         let tcb = Self {
             pid,
             kernel_stack,
+            child_waiters: WaitQueue::new(),
             // SAFETY: 单核，且所有访问都限制在 inner_exclusive_access 的短作用域内。
             inner: unsafe {
                 UPSafeCell::new(TaskControlBlockInner {
@@ -193,6 +221,7 @@ impl TaskControlBlock {
         let child = Arc::new(Self {
             pid,
             kernel_stack,
+            child_waiters: WaitQueue::new(),
             // SAFETY: 同 new()
             inner: unsafe {
                 UPSafeCell::new(TaskControlBlockInner {
