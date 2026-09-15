@@ -46,6 +46,10 @@ else
 CARGO_FLAGS :=
 endif
 
+# 文件系统镜像。由 easy-fs-fuse 在宿主机上制作，QEMU 当 virtio-blk 磁盘挂上去。
+FS_IMG     := fs.img
+FS_BLOCKS  ?= 4096
+
 QEMU       := qemu-system-riscv64
 # 用 -kernel 而不是 -device loader：QEMU 11 自带的 OpenSBI 是 fw_dynamic 形态，
 # 它要靠 QEMU 填进来的启动信息才知道下一级该跳到哪。用 -device loader 只是把
@@ -54,14 +58,16 @@ QEMU       := qemu-system-riscv64
 QEMU_ARGS  := -machine virt \
               -nographic \
               -bios default \
-              -kernel $(KERNEL_BIN)
+              -kernel $(KERNEL_BIN) \
+              -drive file=$(FS_IMG),if=none,format=raw,id=x0 \
+              -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 
 DEMO_LOG   := docs/demo.log
 # 喂给 shell 的脚本。第 10 周起 CCNUOS 是交互式的，不给输入就只会停在提示符上。
 DEMO_INPUT := tools/demo-input.txt
 DEMO_HTML  := docs/demo.html
 
-.PHONY: all build run debug gdb clean clean-user fmt clippy asm env check demo user
+.PHONY: all build run debug gdb clean clean-user fmt clippy asm env check demo user fs-img test
 
 all: build
 
@@ -105,20 +111,30 @@ build: env user
 	@$(OBJCOPY) --strip-all $(KERNEL_ELF) -O binary $(KERNEL_BIN)
 	@echo "内核镜像: $(KERNEL_BIN)  ($$(wc -c < $(KERNEL_BIN) | tr -d ' ') 字节)"
 
-run: build
+# 制作文件系统镜像。easy-fs-fuse 和内核共用同一份 easy-fs crate，
+# 所以不可能出现"制作工具和内核对磁盘布局的理解不一致"这种问题。
+fs-img: env
+	@$(CARGO) run --release --quiet --manifest-path easy-fs-fuse/Cargo.toml -- $(FS_IMG) $(FS_BLOCKS)
+
+# 文件系统的单元测试跑在**宿主机**上，不需要 QEMU 也不需要内核。
+# 这是把 easy-fs 做成独立 crate 的全部意义：秒级反馈。
+test: env
+	@$(CARGO) test --manifest-path easy-fs/Cargo.toml
+
+run: build fs-img
 	@echo "启动 QEMU（Ctrl-A 然后按 X 可强制退出）"
 	@echo "------------------------------------------------------------"
 	@$(QEMU) $(QEMU_ARGS)
 
 # 录一次启动，渲染成可在浏览器里回放的单文件 HTML。
 # 适合放进答辩材料，或者发给没装 QEMU 的人看。
-demo: build
+demo: build fs-img
 	@CCNUOS_INPUT=$(DEMO_INPUT) bash tools/capture.sh $(DEMO_LOG) $(QEMU) $(QEMU_ARGS)
 	@python3 tools/ansi2html.py $(DEMO_LOG) $(DEMO_HTML)
 	@echo "用浏览器打开：$(CURDIR)/$(DEMO_HTML)"
 
 # 挂起在第一条指令，等 GDB 连 localhost:1234
-debug: build
+debug: build fs-img
 	@$(QEMU) $(QEMU_ARGS) -s -S
 
 gdb:
@@ -138,11 +154,17 @@ check: env
 
 fmt:
 	@cd $(OS_DIR) && $(CARGO) fmt
+	@$(CARGO) fmt --manifest-path easy-fs/Cargo.toml
+	@$(CARGO) fmt --manifest-path easy-fs-fuse/Cargo.toml
 
 clippy:
 	@cd $(OS_DIR) && $(CARGO) clippy $(CARGO_FLAGS)
+	@$(CARGO) clippy --manifest-path easy-fs/Cargo.toml
+	@$(CARGO) clippy --manifest-path easy-fs-fuse/Cargo.toml
 
 clean:
 	@cd $(OS_DIR) && $(CARGO) clean
 	@cd $(USER_DIR) && $(CARGO) clean
-	@rm -f $(OS_DIR)/src/link_app.S
+	@$(CARGO) clean --manifest-path easy-fs/Cargo.toml
+	@$(CARGO) clean --manifest-path easy-fs-fuse/Cargo.toml
+	@rm -f $(OS_DIR)/src/link_app.S $(FS_IMG)

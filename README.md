@@ -20,7 +20,8 @@
 | ✅ 第 9 周 (`v0.9`) | 进程树、fork/exec/waitpid、僵尸回收 —— **阶段 II 完成** |
 | ✅ 第 10 周 (`v0.10`) | `File` trait、文件描述符表、`sys_read`、交互式 shell |
 | ✅ 第 11 周 (`v0.11`) | 匿名管道（环形缓冲 + EOF 检测）、`sys_pipe`/`sys_dup`、shell 支持 `\|` |
-| ⬜ 第 12 周 | virtio-blk 驱动、块缓存 |
+| ✅ 第 12 周 (`v0.12`) | `easy-fs` 独立 crate（宿主机可测）、virtio-blk 驱动、块缓存 |
+| ⬜ 第 13 周 | inode、目录、文件读写 |
 
 完整计划见 [ROADMAP.md](ROADMAP.md)。
 
@@ -53,6 +54,7 @@ ccnuos>
 其他命令：
 
 ```bash
+make test           # 文件系统单元测试（宿主机，不需要 QEMU）
 make check          # 快速类型检查
 make asm            # 反汇编内核，看生成了什么代码
 make demo           # 录一次启动，生成可在浏览器回放的单文件 HTML
@@ -88,6 +90,8 @@ ccnuos/
         ├── csr.rs          RISC-V 控制状态寄存器访问
         ├── loader.rs       找出嵌在镜像里的用户程序 ELF
         ├── timer.rs        时钟：time CSR + SBI set_timer，10 ms 时间片
+        ├── drivers/
+        │   └── virtio_blk.rs  第一个真正的设备驱动（virtqueue + 轮询）
         ├── fs/
         │   ├── mod.rs      File trait（磁盘文件将复用它）
         │   ├── stdio.rs    标准输入/输出
@@ -116,6 +120,15 @@ user/                     用户程序（独立 crate）
 └── src/bin/              initproc + user_shell + 16 个用户程序
                           （全部链接到同一个虚拟地址 0x10000）
 
+
+easy-fs/                  文件系统（独立 crate，不依赖内核）
+├── src/block_dev.rs      BlockDevice trait —— 与外界的唯一接口
+├── src/block_cache.rs    块缓存（LRU + 写回）
+├── src/bitmap.rs         位图分配器
+├── src/layout.rs         超级块
+└── src/tests.rs          8 个单元测试，宿主机上 `make test` 秒级跑完
+
+easy-fs-fuse/             在宿主机上制作镜像，与内核共用 easy-fs
 ```
 
 ## 设计取舍

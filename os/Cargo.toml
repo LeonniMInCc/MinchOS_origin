@@ -1,11 +1,12 @@
 [package]
 name = "os"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 authors = ["CCNUOS"]
 description = "CCNUOS —— 一个用 Rust 写的 RISC-V 教学操作系统内核"
 
 [dependencies]
+easy-fs = { path = "../easy-fs" }
 
 [profile.release]
 debug = true      # 保留调试信息，GDB 调试内核时需要

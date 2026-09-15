@@ -1,4 +1,5 @@
 target/
+fs.img
 *.bin
 docs/demo.log
 # 由 os/build.rs 生成

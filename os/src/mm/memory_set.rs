@@ -364,6 +364,11 @@ impl MemorySet {
         // 比如往用户进程的页帧里装载程序、读用户传来的缓冲区。
         add("可用物理内存", sym!(ekernel), MEMORY_END, r | w);
 
+        // 设备寄存器（MMIO）。它不是"内存"，但 CPU 要用普通的 load/store
+        // 去访问，所以同样得在页表里有映射。恒等映射 + R|W，不带 X 也不带 U。
+        let (mmio_start, mmio_end) = crate::drivers::MMIO_REGION;
+        add("MMIO 设备寄存器", mmio_start, mmio_end, r | w);
+
         // 跳板页。内核地址空间也要映射它：trap_return 里那条
         // `jr restore_va` 是在内核地址空间里执行的。
         set.map_trampoline();

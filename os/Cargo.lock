@@ -3,5 +3,12 @@
 version = 4
 
 [[package]]
+name = "easy-fs"
+version = "0.1.0"
+
+[[package]]
 name = "os"
-version = "0.11.0"
+version = "0.12.0"
+dependencies = [
+ "easy-fs",
+]

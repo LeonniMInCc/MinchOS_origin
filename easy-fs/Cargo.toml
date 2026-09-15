@@ -1,0 +1,7 @@
+[package]
+name = "easy-fs"
+version = "0.1.0"
+edition = "2021"
+description = "CCNUOS 的简易文件系统。不依赖内核，可在宿主机上跑测试。"
+
+[dependencies]
