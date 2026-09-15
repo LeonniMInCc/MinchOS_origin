@@ -34,7 +34,7 @@ mod processor;
 mod switch;
 mod tcb;
 
-use crate::loader::get_app_data_by_name;
+use crate::fs::read_file;
 use crate::sync::UPSafeCell;
 use alloc::sync::Arc;
 use context::TaskContext;
@@ -63,8 +63,8 @@ fn initproc() -> Arc<TaskControlBlock> {
 
 /// 创建 `initproc` 并放进就绪队列。整个用户态世界的起点。
 pub fn add_initproc() {
-    let data = get_app_data_by_name("initproc").expect("内核镜像里找不到 initproc");
-    let task = Arc::new(TaskControlBlock::new(data));
+    let data = read_file("initproc").expect("文件系统里找不到 initproc");
+    let task = Arc::new(TaskControlBlock::new(&data));
     info!("initproc 已创建，pid = {}", task.pid());
     *INITPROC.exclusive_access() = Some(Arc::clone(&task));
     add_task(task);

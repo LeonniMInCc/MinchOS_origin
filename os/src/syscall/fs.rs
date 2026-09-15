@@ -4,8 +4,8 @@
 //! 分派给一个 [`File`] 实现。第 11 周的管道和第 13 周的磁盘文件
 //! 只要多写一个实现，这里一行都不用改。
 
-use crate::fs::{make_pipe, File};
-use crate::mm::{translated_byte_buffer, translated_refmut, UserBuffer};
+use crate::fs::{list_files, make_pipe, open_file, File, OpenFlags};
+use crate::mm::{translated_byte_buffer, translated_refmut, translated_str, UserBuffer};
 use crate::task::{current_pid, current_task, current_user_token};
 use alloc::sync::Arc;
 
@@ -176,4 +176,71 @@ pub fn sys_dup(fd: usize) -> isize {
     let new_fd = inner.alloc_fd();
     inner.fd_table[new_fd] = Some(file);
     new_fd as isize
+}
+
+/// 文件名的长度上限。
+const MAX_NAME_LEN: usize = 64;
+
+/// `open(path, flags)` —— 打开（或创建）一个磁盘文件，返回 fd。
+///
+/// 从这一章起，[`crate::fs::File`] 有了第三个实现。而这个函数之所以
+/// 只有二十行，是因为**文件描述符表根本不关心底下是什么** ——
+/// 装进去的是标准输入、管道还是磁盘文件，`sys_read` / `sys_write`
+/// 的代码完全一样。
+pub fn sys_open(path_ptr: usize, flags: u32) -> isize {
+    let Some(task) = current_task() else {
+        return -1;
+    };
+    let token = current_user_token();
+
+    let Some(path) = translated_str(token, path_ptr, MAX_NAME_LEN) else {
+        error!("sys_open：进程 {} 传来了不可读的路径指针", task.pid());
+        return -1;
+    };
+
+    let Some(file) = open_file(&path, OpenFlags::from_bits(flags)) else {
+        return -1; // 文件不存在，且没要求创建
+    };
+
+    let mut inner = task.inner_exclusive_access();
+    let fd = inner.alloc_fd();
+    inner.fd_table[fd] = Some(file);
+    fd as isize
+}
+
+/// `listdir(buf, len)` —— 把根目录下的文件名以换行分隔写进用户缓冲区。
+///
+/// 返回写入的字节数；缓冲区不够时返回 -1。
+///
+/// # 这不是 POSIX
+///
+/// 真实系统用的是 `getdents`，返回的是结构化的目录项（每条带 inode 号、
+/// 类型、名字长度），由用户库解析。那套接口能支持任意大的目录、
+/// 支持分次读取，但要多定义一个 ABI 结构体。
+///
+/// 我们只有一个扁平的根目录、十几个文件，所以退而求其次：
+/// 直接给一串换行分隔的名字。**接口的复杂度应该配得上需求。**
+pub fn sys_listdir(buf: usize, len: usize) -> isize {
+    let names = list_files();
+    let mut text = alloc::string::String::new();
+    for name in &names {
+        text.push_str(name);
+        text.push('\n');
+    }
+    if text.len() > len {
+        error!("sys_listdir：缓冲区 {} 字节装不下 {} 字节的目录列表", len, text.len());
+        return -1;
+    }
+
+    let token = current_user_token();
+    let Some(buffers) = translated_byte_buffer(token, buf, text.len()) else {
+        error!("sys_listdir：进程 {} 传来了不可写的缓冲区", current_pid());
+        return -1;
+    };
+
+    let mut out = UserBuffer::new(buffers);
+    for (slot, byte) in out.bytes_mut().zip(text.bytes()) {
+        *slot = byte;
+    }
+    text.len() as isize
 }

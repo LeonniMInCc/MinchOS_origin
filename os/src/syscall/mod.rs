@@ -20,12 +20,15 @@
 mod fs;
 mod process;
 
-use fs::{sys_close, sys_dup, sys_pipe, sys_read, sys_write};
+use fs::{sys_close, sys_dup, sys_listdir, sys_open, sys_pipe, sys_read, sys_write};
 use process::{
     sys_exec, sys_exit, sys_fork, sys_get_time, sys_getpid, sys_waitpid, sys_yield,
 };
 
 const SYSCALL_DUP: usize = 24;
+const SYSCALL_OPEN: usize = 56;
+/// 非 POSIX：真实系统用 getdents。见 `sys_listdir` 的说明。
+const SYSCALL_LISTDIR: usize = 1000;
 const SYSCALL_PIPE: usize = 59;
 const SYSCALL_CLOSE: usize = 57;
 const SYSCALL_READ: usize = 63;
@@ -42,6 +45,8 @@ const SYSCALL_WAITPID: usize = 260;
 pub fn syscall(id: usize, args: [usize; 3]) -> isize {
     match id {
         SYSCALL_DUP => sys_dup(args[0]),
+        SYSCALL_OPEN => sys_open(args[0], args[1] as u32),
+        SYSCALL_LISTDIR => sys_listdir(args[0], args[1]),
         SYSCALL_PIPE => sys_pipe(args[0]),
         SYSCALL_CLOSE => sys_close(args[0]),
         SYSCALL_READ => sys_read(args[0], args[1], args[2]),

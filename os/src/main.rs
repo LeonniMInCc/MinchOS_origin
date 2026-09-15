@@ -38,7 +38,6 @@ mod csr;
 mod drivers;
 mod fs;
 mod lang_items;
-mod loader;
 mod mm;
 mod sbi;
 mod sync;
@@ -49,8 +48,6 @@ mod trap;
 
 // 把入口汇编整段嵌进来，让它参与链接
 global_asm!(include_str!("entry.asm"));
-// 由 build.rs 生成：把所有用户程序的二进制嵌进内核的 .data 段
-global_asm!(include_str!("link_app.S"));
 
 // 链接脚本导出的布局符号。
 //
@@ -142,81 +139,45 @@ fn print_memory_layout() {
     );
 }
 
-/// 挂载检查：读出超级块，核对魔数和各区布局。
+/// 持久化自检：往磁盘上一个真实文件里记启动次数。
 ///
-/// 这是第 12 周的验收标准。核对魔数不是形式主义 —— 挂载一个格式不对的
-/// 镜像，内核会按错误的布局去解释一堆随机字节，崩在离起因十万八千里的
-/// 地方。**在边界上验，比在深处崩强。**
-fn mount_check() {
-    let device = drivers::block_device();
+/// 第 12 周的版本是直接往一个裸块里写计数。现在有了文件系统，
+/// 换成写一个**真正的文件** —— 这条路径会经过 `open` / `read` / `write`
+/// 和 inode 的分配与扩容，覆盖面大得多。
+///
+/// 连开几次能看到计数递增，说明：文件被创建了、内容写进去了、
+/// 落盘了、而且重启后还能按名字找回来。
+fn persistence_check() {
+    use fs::OpenFlags;
 
-    let Some(sb) = easy_fs::read_super_block(&device) else {
-        error!("块设备上不是一个合法的 CCNUOS 文件系统（魔数不对）");
+    const COUNTER_FILE: &str = "bootcount";
+    let flags = OpenFlags::RDWR.with(OpenFlags::CREATE);
+
+    let Some(file) = fs::open_file(COUNTER_FILE, flags) else {
+        error!("持久化自检：打不开 {}", COUNTER_FILE);
         return;
     };
 
-    info!("文件系统已挂载，魔数 {:#010x}：", sb.magic());
-    info!("  超级块        块 0");
-    info!("  索引节点位图  块 1..{}", sb.inode_area_start());
-    info!("  索引节点区    块 {}..{}", sb.inode_area_start(), sb.data_bitmap_start());
-    info!("  数据块位图    块 {}..{}", sb.data_bitmap_start(), sb.data_area_start());
-    info!("  数据块区      块 {}..{}", sb.data_area_start(), sb.total_blocks);
-    info!(
-        "  共 {} 块（{} KiB）",
-        sb.total_blocks,
-        sb.total_blocks as usize * easy_fs::BLOCK_SZ / 1024
-    );
-
-    persistence_check(&sb);
-
-    let (hits, misses, evictions) = easy_fs::block_cache_stats();
-    debug!("块缓存：命中 {}，未命中 {}，淘汰 {}", hits, misses, evictions);
-}
-
-/// 磁盘上的一个启动计数器。放在数据区第一块，纯粹用来做自检。
-#[repr(C)]
-struct BootCounter {
-    magic: u32,
-    count: u32,
-}
-
-const BOOT_COUNTER_MAGIC: u32 = 0x424f_4f54; // "BOOT"
-
-/// 写路径与持久化自检。
-///
-/// 前面的挂载检查只证明了**读**是通的。这里往磁盘写一个计数器并落盘，
-/// 下次开机时它应该还在 —— 这是唯一能同时验证"写路径正确"和
-/// "数据真的到了磁盘上"的办法。
-///
-/// 注意最后那句 `sync_all_blocks()` 不能省：块缓存是**写回**策略，
-/// 不显式落盘的话，这次修改只存在于内存里，一关机就没了。
-fn persistence_check(sb: &easy_fs::SuperBlock) {
-    let device = drivers::block_device();
-    let scratch = sb.data_area_start() as usize;
-
-    let count = easy_fs::get_block_cache(scratch, device)
-        .lock()
-        .modify(0, |c: &mut BootCounter| {
-            if c.magic != BOOT_COUNTER_MAGIC {
-                // 第一次见到这块盘
-                c.magic = BOOT_COUNTER_MAGIC;
-                c.count = 0;
-            }
-            c.count += 1;
-            c.count
-        });
-
-    // 写回策略：不显式落盘的话，这次修改只在内存里
+    let count = file.read_all().first().copied().unwrap_or(0) + 1;
+    // read_all 会把读写位置推到文件末尾，所以要重新打开才能从头写。
+    // 真实系统里这一步是 lseek —— 我们还没有，重开一次等效。
+    let Some(file) = fs::open_file(COUNTER_FILE, flags) else {
+        return;
+    };
+    file.write_bytes(&[count]);
     easy_fs::sync_all_blocks();
 
     if count == 1 {
-        info!("持久化自检：这是这块盘的第 1 次启动（计数已写入块 {}）", scratch);
+        info!("持久化自检：这是这块盘的第 1 次启动（已创建文件 {}）", COUNTER_FILE);
     } else {
         info!(
-            "持久化自检：这是第 {} 次启动 —— 上次写的数据确实留在磁盘上了",
-            count
+            "持久化自检：这是第 {} 次启动 —— 上次写进 {} 的内容确实留在磁盘上了",
+            count, COUNTER_FILE
         );
     }
+
+    let (hits, misses, evictions) = easy_fs::block_cache_stats();
+    debug!("块缓存：命中 {}，未命中 {}，淘汰 {}", hits, misses, evictions);
 }
 
 /// 内核的 Rust 入口。由 `entry.asm` 在支起栈之后调用，永不返回。
@@ -225,8 +186,8 @@ pub fn rust_main() -> ! {
     clear_bss();
 
     println!("{}", BANNER);
-    println!("       CCNUOS v0.12.0 — RISC-V 64 (SV39) 教学操作系统");
-    println!("       第十二周：virtio-blk 驱动 / 块缓存\n");
+    println!("       CCNUOS v0.13.0 — RISC-V 64 (SV39) 教学操作系统");
+    println!("       第十三周：文件系统 / 程序从磁盘加载\n");
 
     info!("内核已进入 S 态，启动栈可用，.bss 已清零");
     print_memory_layout();
@@ -235,9 +196,10 @@ pub fn rust_main() -> ! {
     mm::self_test();
     mm::enable_paging(); // 此后每一次访存都要经过 MMU
 
-    if drivers::init() {
-        mount_check();
+    if !drivers::init() || !fs::mount() {
+        panic!("没有可用的文件系统 —— 用户程序都在盘上，无法继续");
     }
+    persistence_check();
 
     trap::init();
     trap::enable_timer_interrupt();

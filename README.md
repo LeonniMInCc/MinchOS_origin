@@ -21,7 +21,8 @@
 | ✅ 第 10 周 (`v0.10`) | `File` trait、文件描述符表、`sys_read`、交互式 shell |
 | ✅ 第 11 周 (`v0.11`) | 匿名管道（环形缓冲 + EOF 检测）、`sys_pipe`/`sys_dup`、shell 支持 `\|` |
 | ✅ 第 12 周 (`v0.12`) | `easy-fs` 独立 crate（宿主机可测）、virtio-blk 驱动、块缓存 |
-| ⬜ 第 13 周 | inode、目录、文件读写 |
+| ✅ 第 13 周 (`v0.13`) | inode/目录/`open`/`>` 重定向，程序改从磁盘加载 —— **阶段 III 完成** |
+| ⬜ 第 14 周 | 同步原语：互斥锁、信号量、条件变量 |
 
 完整计划见 [ROADMAP.md](ROADMAP.md)。
 
@@ -48,6 +49,13 @@ ccnuos>
 ```
 
 输入 `help` 看有哪些程序，输入程序名回车执行，`exit` 退出（系统随即关机）。
+支持管道和输出重定向：
+
+```
+ccnuos> 12words | 13upper | 14wc
+ccnuos> 12words > out.txt
+ccnuos> 18ls
+```
 
 **完整的运行、调试与排错说明见 [docs/RUNNING.md](docs/RUNNING.md)**，包括每一段输出的含义、卡住了怎么退出、以及 OS 开发都有哪些工具。
 
@@ -93,9 +101,10 @@ ccnuos/
         ├── drivers/
         │   └── virtio_blk.rs  第一个真正的设备驱动（virtqueue + 轮询）
         ├── fs/
-        │   ├── mod.rs      File trait（磁盘文件将复用它）
+        │   ├── mod.rs      File trait（三个实现共用同一组动词）
         │   ├── stdio.rs    标准输入/输出
-        │   └── pipe.rs     匿名管道（环形缓冲区）
+        │   ├── pipe.rs     匿名管道（环形缓冲区）
+        │   └── inode.rs    磁盘文件
         ├── mm/
         │   ├── heap_allocator.rs   伙伴系统分配器 + #[global_allocator]
         │   ├── address.rs          四种地址/页号的 newtype 封装
@@ -117,7 +126,7 @@ ccnuos/
 
 user/                     用户程序（独立 crate）
 ├── src/lib.rs            最小运行库：_start、clear_bss、println!
-└── src/bin/              initproc + user_shell + 16 个用户程序
+└── src/bin/              initproc + user_shell + 19 个用户程序
                           （全部链接到同一个虚拟地址 0x10000）
 
 
@@ -125,8 +134,10 @@ easy-fs/                  文件系统（独立 crate，不依赖内核）
 ├── src/block_dev.rs      BlockDevice trait —— 与外界的唯一接口
 ├── src/block_cache.rs    块缓存（LRU + 写回）
 ├── src/bitmap.rs         位图分配器
-├── src/layout.rs         超级块
-└── src/tests.rs          8 个单元测试，宿主机上 `make test` 秒级跑完
+├── src/layout.rs         超级块、inode、目录项
+├── src/efs.rs            文件系统本体（分配 inode 与数据块）
+├── src/vfs.rs            inode 句柄：find / create / ls / 读写
+└── src/tests.rs          17 个单元测试，宿主机上 `make test` 秒级跑完
 
 easy-fs-fuse/             在宿主机上制作镜像，与内核共用 easy-fs
 ```

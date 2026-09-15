@@ -1,5 +1,7 @@
-help
-15pipetest
-12words | 13upper
+18ls
+17write
+16cat
 12words | 13upper | 14wc
+12words > out.txt
+18ls
 exit

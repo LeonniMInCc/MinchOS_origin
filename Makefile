@@ -113,8 +113,9 @@ build: env user
 
 # 制作文件系统镜像。easy-fs-fuse 和内核共用同一份 easy-fs crate，
 # 所以不可能出现"制作工具和内核对磁盘布局的理解不一致"这种问题。
-fs-img: env
-	@$(CARGO) run --release --quiet --manifest-path easy-fs-fuse/Cargo.toml -- $(FS_IMG) $(FS_BLOCKS)
+fs-img: env user
+	@$(CARGO) run --release --quiet --manifest-path easy-fs-fuse/Cargo.toml -- \
+		$(FS_IMG) $(USER_OUT) $(FS_BLOCKS)
 
 # 文件系统的单元测试跑在**宿主机**上，不需要 QEMU 也不需要内核。
 # 这是把 easy-fs 做成独立 crate 的全部意义：秒级反馈。

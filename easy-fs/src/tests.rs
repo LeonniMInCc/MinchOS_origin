@@ -9,6 +9,7 @@ use super::*;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use std::string::ToString;
 use std::sync::Mutex as StdMutex;
 
 /// 一个用内存模拟的块设备，顺便统计真正落到"磁盘"上的读写次数。
@@ -230,5 +231,204 @@ fn 超级块写入与校验() {
         assert_eq!(sb.data_bitmap_start(), 10);
         assert_eq!(sb.data_area_start(), 11);
         assert_eq!(sb.data_area_start() + sb.data_area_blocks, 64);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 文件系统
+// ---------------------------------------------------------------------------
+
+/// 格式化一块新盘并返回 `(文件系统, 根目录, 磁盘)`。
+fn fresh_fs(blocks: u32) -> (Arc<Mutex<EasyFileSystem>>, Inode, Arc<MemDisk>) {
+    let disk = MemDisk::new(blocks as usize);
+    let fs = EasyFileSystem::format(disk.clone(), blocks, 1, 8);
+    let root = EasyFileSystem::root_inode(&fs);
+    (fs, root, disk)
+}
+
+#[test]
+fn 格式化后根目录为空() {
+    with_clean_cache(|| {
+        let (fs, root, _) = fresh_fs(256);
+        assert!(root.is_dir());
+        assert_eq!(root.size(), 0);
+        assert!(root.ls().is_empty());
+        // 只有根目录这一个 inode 被占用
+        let (inodes, _, _) = fs.lock().usage();
+        assert_eq!(inodes, 1);
+    });
+}
+
+#[test]
+fn 建文件写读往返() {
+    with_clean_cache(|| {
+        let (_, root, _) = fresh_fs(256);
+
+        let f = root.create("hello.txt").expect("创建失败");
+        assert_eq!(f.size(), 0);
+
+        let text = b"hello, ccnuos file system!";
+        assert_eq!(f.write_at(0, text), text.len());
+        assert_eq!(f.size(), text.len());
+
+        let mut buf = [0u8; 64];
+        let n = f.read_at(0, &mut buf);
+        assert_eq!(n, text.len());
+        assert_eq!(&buf[..n], text);
+
+        // 从偏移读
+        let n = f.read_at(7, &mut buf);
+        assert_eq!(&buf[..n], b"ccnuos file system!");
+
+        // 读超出文件末尾应该返回 0
+        assert_eq!(f.read_at(1000, &mut buf), 0);
+    });
+}
+
+#[test]
+fn 重名创建返回_none() {
+    with_clean_cache(|| {
+        let (_, root, _) = fresh_fs(256);
+        assert!(root.create("a").is_some());
+        assert!(root.create("a").is_none(), "重名不该建出第二个");
+        assert_eq!(root.ls(), vec!["a".to_string()]);
+    });
+}
+
+#[test]
+fn 目录列表与查找() {
+    with_clean_cache(|| {
+        let (_, root, _) = fresh_fs(256);
+        for name in ["alpha", "beta", "gamma"] {
+            root.create(name).unwrap();
+        }
+        assert_eq!(root.ls(), vec!["alpha", "beta", "gamma"]);
+        assert!(root.find("beta").is_some());
+        assert!(root.find("delta").is_none());
+    });
+}
+
+#[test]
+fn 大文件跨越间接块() {
+    with_clean_cache(|| {
+        // 27 个直接块只够 13.5 KiB，写 40 KiB 必然要用上间接块
+        let (_, root, _) = fresh_fs(512);
+        let f = root.create("big").unwrap();
+
+        let size = 40 * 1024;
+        let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+        assert_eq!(f.write_at(0, &data), size);
+        assert_eq!(f.size(), size);
+
+        // 整体读回来逐字节核对
+        let mut back = vec![0u8; size];
+        assert_eq!(f.read_at(0, &mut back), size);
+        assert_eq!(back, data, "跨间接块的内容不一致");
+
+        // 跨块边界的局部读也要对
+        let mut chunk = [0u8; 100];
+        let off = 27 * BLOCK_SZ - 50; // 正好骑在直接块和间接块的交界上
+        f.read_at(off, &mut chunk);
+        assert_eq!(&chunk[..], &data[off..off + 100]);
+    });
+}
+
+#[test]
+fn 清空后归还数据块() {
+    with_clean_cache(|| {
+        let (fs, root, _) = fresh_fs(512);
+        let (_, before, _) = fs.lock().usage();
+
+        let f = root.create("tmp").unwrap();
+        f.write_at(0, &vec![0xAB; 20 * 1024]);
+        let (_, after_write, _) = fs.lock().usage();
+        assert!(after_write > before, "写入应该占用数据块");
+
+        f.clear();
+        assert_eq!(f.size(), 0);
+        let (_, after_clear, _) = fs.lock().usage();
+        // 目录项占的那一块还在（目录也是文件），但文件自己的块该还回来
+        assert!(
+            after_clear < after_write,
+            "clear 之后数据块没归还：{after_write} → {after_clear}"
+        );
+    });
+}
+
+#[test]
+fn 重新挂载后数据还在() {
+    with_clean_cache(|| {
+        let disk = MemDisk::new(512);
+        let text = b"survives a remount";
+
+        {
+            let fs = EasyFileSystem::format(disk.clone(), 512, 1, 8);
+            let root = EasyFileSystem::root_inode(&fs);
+            let f = root.create("persist").unwrap();
+            f.write_at(0, text);
+            sync_all_blocks();
+        }
+
+        // 清空缓存，模拟重启 —— 之后所有数据只能来自"磁盘"
+        clear_block_cache();
+
+        let fs = EasyFileSystem::open(disk.clone()).expect("重新挂载失败");
+        let root = EasyFileSystem::root_inode(&fs);
+        assert_eq!(root.ls(), vec!["persist".to_string()]);
+
+        let f = root.find("persist").expect("重启后文件不见了");
+        let mut buf = [0u8; 32];
+        let n = f.read_at(0, &mut buf);
+        assert_eq!(&buf[..n], text);
+    });
+}
+
+#[test]
+fn 新分配的数据块是干净的() {
+    with_clean_cache(|| {
+        let (_, root, _) = fresh_fs(512);
+
+        // 写一个文件、清空、再建一个新文件 —— 新文件不该看到旧内容
+        let a = root.create("a").unwrap();
+        a.write_at(0, &vec![0xEE; 4096]);
+        a.clear();
+
+        let b = root.create("b").unwrap();
+        b.write_at(0, &[0u8; 8]); // 只写 8 字节，但会占一整块
+        let mut buf = [0u8; 8];
+        b.read_at(0, &mut buf);
+        assert!(buf.iter().all(|&x| x == 0), "新文件里出现了上一个文件的残留");
+    });
+}
+
+#[test]
+fn 多个文件后根目录仍然完好() {
+    with_clean_cache(|| {
+        // 复现内核里的场景：镜像里已经有二十来个文件，
+        // 启动时再创建一个（bootcount），然后还要能找到原来的程序。
+        let disk = MemDisk::new(4096);
+        let fs = EasyFileSystem::format(disk.clone(), 4096, 1, 32);
+        let root = EasyFileSystem::root_inode(&fs);
+
+        for i in 0..21 {
+            let name = std::format!("prog{i:02}");
+            let f = root.create(&name).unwrap_or_else(|| panic!("创建 {name} 失败"));
+            f.write_at(0, &vec![i as u8; 9000]); // 和真实程序差不多大
+        }
+        assert_eq!(root.ls().len(), 21);
+        assert!(root.is_dir(), "建了 21 个文件之后根目录就不是目录了");
+
+        // 再建一个（模拟 bootcount）
+        let counter = root.create("bootcount").expect("创建 bootcount 失败");
+        counter.write_at(0, &[1u8]);
+
+        assert!(root.is_dir(), "建 bootcount 之后根目录被写坏了");
+        assert_eq!(root.ls().len(), 22);
+
+        // 原来的程序还要能找到、内容还要对
+        let f = root.find("prog05").expect("找不到 prog05");
+        let mut buf = [0u8; 16];
+        f.read_at(0, &mut buf);
+        assert!(buf.iter().all(|&b| b == 5), "prog05 的内容被破坏了");
     });
 }

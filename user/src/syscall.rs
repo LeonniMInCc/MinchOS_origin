@@ -8,6 +8,8 @@
 use core::arch::asm;
 
 const SYSCALL_DUP: usize = 24;
+const SYSCALL_OPEN: usize = 56;
+const SYSCALL_LISTDIR: usize = 1000;
 const SYSCALL_PIPE: usize = 59;
 const SYSCALL_CLOSE: usize = 57;
 const SYSCALL_READ: usize = 63;
@@ -55,6 +57,16 @@ pub fn sys_write(fd: usize, buffer: &[u8]) -> isize {
 /// 串口是裸设备，没有行缓冲。
 pub fn sys_read(fd: usize, buffer: &mut [u8]) -> isize {
     syscall(SYSCALL_READ, [fd, buffer.as_mut_ptr() as usize, buffer.len()])
+}
+
+/// 打开（或创建）一个文件，返回 fd。`path` 必须以 `\0` 结尾。
+pub fn sys_open(path: &str, flags: u32) -> isize {
+    syscall(SYSCALL_OPEN, [path.as_ptr() as usize, flags as usize, 0])
+}
+
+/// 把根目录下的文件名（换行分隔）写进 `buf`。
+pub fn sys_listdir(buf: &mut [u8]) -> isize {
+    syscall(SYSCALL_LISTDIR, [buf.as_mut_ptr() as usize, buf.len(), 0])
 }
 
 /// 造一个管道。`fds[0]` 是读端，`fds[1]` 是写端。

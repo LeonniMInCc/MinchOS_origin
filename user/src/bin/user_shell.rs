@@ -1,6 +1,7 @@
 //! CCNUOS 的 shell。
 //!
-//! 第 11 周起它还支持**管道**：`12words | 13upper | 14wc`。
+//! 第 11 周起支持**管道**：`12words | 13upper | 14wc`。
+//! 第 13 周起支持**输出重定向**：`12words > out.txt`。
 //!
 //! 一个 shell 本质上只做三件事，而这三件事我们前几周刚好都做完了：
 //!
@@ -26,7 +27,7 @@
 #[macro_use]
 extern crate user_lib;
 
-use user_lib::{close, dup, exec, fork, getchar, pipe, waitpid, STDIN, STDOUT};
+use user_lib::{close, dup, exec, fork, getchar, open, open_flags, pipe, waitpid, STDIN, STDOUT};
 
 const LINE_MAX: usize = 255; // 留一个字节给 exec 需要的 \0
 const CR: u8 = 0x0d; // 回车
@@ -105,6 +106,17 @@ fn split_pipeline<'a>(cmd: &'a str, out: &mut [&'a str; MAX_STAGES]) -> Option<u
     }
 }
 
+/// 把一段命令拆成 `(程序名, 输出重定向目标)`。
+///
+/// 只支持最简单的 `cmd > file`。真实 shell 还有 `<`、`>>`、`2>` 等等，
+/// 机制完全相同 —— 都是"在 exec 之前把某个 fd 换掉"。
+fn split_redirect(stage: &str) -> (&str, Option<&str>) {
+    match stage.split_once('>') {
+        Some((cmd, file)) => (cmd.trim(), Some(file.trim())),
+        None => (stage.trim(), None),
+    }
+}
+
 /// 执行一条命令（可能是一条管道）。
 fn run_command(cmd: &str) {
     let mut stages = [""; MAX_STAGES];
@@ -150,8 +162,26 @@ fn run_command(cmd: &str) {
                 close(p[1] as usize);
             }
 
-            exec(stages[i]);
-            println!("ccnuos: 找不到命令 \"{}\"", stages[i]);
+            // 输出重定向。手法和管道完全一样：关掉 fd 1，
+            // 再打开文件 —— 新 fd 必然落在 1 上（最小空闲号）。
+            // **程序自己完全不知道它的输出去了哪里。**
+            let (program, redirect) = split_redirect(stages[i]);
+            if let Some(path) = redirect {
+                if path.is_empty() {
+                    println!("ccnuos: > 后面要跟文件名");
+                    user_lib::sys_exit(2);
+                }
+                close(STDOUT);
+                let flags = open_flags::WRONLY | open_flags::CREATE | open_flags::TRUNC;
+                if open(path, flags) < 0 {
+                    // stdout 已经关了，只能往 stderr 报
+                    user_lib::write(2, b"ccnuos: \xe6\x89\x93\xe4\xb8\x8d\xe5\xbc\x80\xe9\x87\x8d\xe5\xae\x9a\xe5\x90\x91\xe6\x96\x87\xe4\xbb\xb6\n");
+                    user_lib::sys_exit(1);
+                }
+            }
+
+            exec(program);
+            println!("ccnuos: 找不到命令 \"{}\"", program);
             user_lib::sys_exit(127);
         }
 
@@ -242,6 +272,9 @@ fn print_help() {
         "11forktest                          fork 语义演示",
         "12words / 13upper / 14wc            管道演示（过滤器）",
         "15pipetest                          直接用 pipe() 的例子",
+        "16cat                               读磁盘文件 readme.txt",
+        "17write                             写磁盘文件 readme.txt",
+        "18ls                                列出根目录",
     ] {
         println!("  {}", name);
     }
@@ -249,4 +282,6 @@ fn print_help() {
     println!("支持管道，最多 {} 级，例如：", MAX_STAGES);
     println!("  12words | 13upper");
     println!("  12words | 13upper | 14wc");
+    println!("支持输出重定向，例如：");
+    println!("  12words > out.txt");
 }

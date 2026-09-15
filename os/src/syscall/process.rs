@@ -1,6 +1,6 @@
 //! 进程相关的系统调用。
 
-use crate::loader::get_app_data_by_name;
+use crate::fs::read_file;
 use crate::mm::{translated_refmut, translated_str};
 use crate::task::{
     current_pid, current_user_token, exec_current, exit_current_and_run_next, fork_current,
@@ -68,13 +68,13 @@ pub fn sys_exec(path_ptr: usize) -> isize {
         return -1;
     };
 
-    let Some(data) = get_app_data_by_name(&path) else {
+    let Some(data) = read_file(&path) else {
         error!("sys_exec：找不到程序 \"{}\"", path);
         return -1;
     };
 
     debug!("进程 {} exec 成 \"{}\"", current_pid(), path);
-    exec_current(data);
+    exec_current(&data);
 
     // 这个返回值不会被用户程序看到：exec 已经换掉了整个地址空间，
     // 新的 TrapContext 里 a0 是 0。写在这里只是为了让函数签名完整。

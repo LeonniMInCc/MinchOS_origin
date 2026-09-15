@@ -10,17 +10,19 @@
 //!
 //! - **第 11 周（现在）**：管道也是"文件"。`words | upper` 靠的就是把
 //!   一个进程的 `stdout` 和另一个进程的 `stdin` 换成管道的两端
-//! - 第 13 周：磁盘上的真实文件
+//! - **第 13 周（现在）**：磁盘上的真实文件
 //!
-//! 第 11 周兑现了这个承诺：加了 [`pipe`] 一个模块，
-//! `sys_read` / `sys_write` **一行都没改**。
+//! 承诺兑现了两次：第 11 周加了 [`pipe`]，第 13 周加了 [`inode`]，
+//! 而 `sys_read` / `sys_write` 自第 10 周写完之后**一行都没改过**。
 //! 这就是 Unix "一切皆文件"那句话的技术含义。
 
+mod inode;
 mod pipe;
 mod stdio;
 
 use crate::mm::UserBuffer;
 
+pub use inode::{init as mount, list_files, open_file, read_file, OpenFlags};
 pub use pipe::make_pipe;
 pub use stdio::{Stdin, Stdout};
 

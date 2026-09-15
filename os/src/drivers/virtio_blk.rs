@@ -27,13 +27,23 @@
 //! 我们这里为了简单用**轮询**等第 4 步 —— 反正文件系统操作本来就不频繁，
 //! 而且引入设备中断需要 PLIC 驱动（第 14 章的事）。
 //!
-//! # 为什么内核指针可以直接当物理地址用
+//! # DMA 缓冲区不能随便给
 //!
-//! 设备做 DMA 时用的是**物理地址**，它不认识页表。而第 7 章建内核地址空间
-//! 时把所有物理内存都做了**恒等映射**（虚拟地址 = 物理地址），
-//! 所以任何内核指针的数值本身就是物理地址，直接传给设备即可。
+//! 设备做 DMA 用的是**物理地址**，它不认识页表。内核的 `.text`/`.data`/`.bss`
+//! 和整个物理内存都是**恒等映射**的（第 7 章），所以这些地方的指针数值
+//! 本身就是物理地址，可以直接交给设备。
 //!
-//! 这是恒等映射除了"方便"之外的第二个好处，到这一章才显出来。
+//! **但内核栈不是。** 从第 8 章起，每个进程的内核栈是在内核地址空间的
+//! 高地址处按需映射（Framed）出来的 —— 虚拟地址 `0xffff_ffff_ffff_c000`
+//! 之类，和物理地址毫无关系。把一个栈上的缓冲区交给设备，
+//! 设备会往那个根本不存在的物理地址写，而调用方看到的缓冲区**保持全零**。
+//!
+//! 这个 bug 极其隐蔽：内核初始化阶段跑在**启动栈**上（它在 `.bss` 里，
+//! 是恒等映射的），一切正常；一旦进入进程上下文，同样的代码就开始读到
+//! 全零的块。第 13 章就是这么被坑了一次。
+//!
+//! 解法是一块**静态的中转缓冲区**（bounce buffer）：DMA 只对着它做，
+//! 前后再拷贝一次。真实驱动在缓冲区不可 DMA 时干的也是同一件事。
 
 use crate::config::PAGE_SIZE;
 use core::sync::atomic::{fence, Ordering};
@@ -191,6 +201,18 @@ static mut REQ_HEADER: BlkReqHeader = BlkReqHeader {
 /// 设备写回的状态字节：0 = 成功。
 static mut REQ_STATUS: u8 = 0xff;
 
+/// DMA 中转缓冲区。
+///
+/// 调用方给的缓冲区可能在内核栈上，而内核栈不是恒等映射的
+/// （见模块文档）。所以一律先中转一次：读的时候设备写这里、我们再拷出去，
+/// 写的时候我们先拷进来、再让设备读。
+///
+/// 它在 `.bss` 里，所以地址即物理地址，而且天然不跨页（512 字节且对齐）。
+#[repr(C, align(512))]
+struct Bounce([u8; BLOCK_SZ]);
+
+static mut BOUNCE: Bounce = Bounce([0; BLOCK_SZ]);
+
 // ---------------------------------------------------------------------------
 // 驱动
 // ---------------------------------------------------------------------------
@@ -329,13 +351,13 @@ impl VirtIOBlk {
         Some(())
     }
 
-    /// 提交一次读或写，同步等它完成。
+    /// 提交一次读或写，同步等它完成。数据经由 [`BOUNCE`] 中转。
     ///
     /// # Safety
     ///
-    /// `buf` 必须指向 [`BLOCK_SZ`] 字节的、内核可访问的内存。
-    /// 因为恒等映射，它的地址直接就是设备要的物理地址。
-    unsafe fn request(&self, block_id: usize, buf: usize, write: bool) {
+    /// 只能有一个调用同时进行 —— 请求头、状态字节和中转缓冲区都是静态的。
+    /// 本项目的内核不可抢占，而这个函数中间不会让出 CPU，所以成立。
+    unsafe fn request(&self, block_id: usize, write: bool) {
         assert!(
             (block_id as u64) < self.capacity,
             "块号 {} 超出设备容量 {}",
@@ -362,7 +384,7 @@ impl VirtIOBlk {
             next: 1,
         };
         (*queue).desc[1] = Descriptor {
-            addr: buf as u64,
+            addr: &raw const BOUNCE as u64,
             len: BLOCK_SZ as u32,
             flags: if write {
                 DESC_F_NEXT
@@ -413,13 +435,28 @@ impl VirtIOBlk {
 impl BlockDevice for VirtIOBlk {
     fn read_block(&self, block_id: usize, buf: &mut [u8]) {
         assert_eq!(buf.len(), BLOCK_SZ, "块缓冲区大小必须正好是 {BLOCK_SZ}");
-        // SAFETY: buf 是内核内存，恒等映射下地址即物理地址。
-        unsafe { self.request(block_id, buf.as_mut_ptr() as usize, false) }
+        // SAFETY: 内核不可抢占，这段不会让出 CPU，所以静态缓冲区独占。
+        unsafe {
+            self.request(block_id, false);
+            // 用裸指针拷贝，不去构造指向 static mut 的引用
+            core::ptr::copy_nonoverlapping(
+                (&raw const BOUNCE).cast::<u8>(),
+                buf.as_mut_ptr(),
+                BLOCK_SZ,
+            );
+        }
     }
 
     fn write_block(&self, block_id: usize, buf: &[u8]) {
         assert_eq!(buf.len(), BLOCK_SZ, "块缓冲区大小必须正好是 {BLOCK_SZ}");
         // SAFETY: 同上。
-        unsafe { self.request(block_id, buf.as_ptr() as usize, true) }
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                buf.as_ptr(),
+                (&raw mut BOUNCE).cast::<u8>(),
+                BLOCK_SZ,
+            );
+            self.request(block_id, true);
+        }
     }
 }

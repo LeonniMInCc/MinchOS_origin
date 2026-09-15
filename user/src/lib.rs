@@ -28,9 +28,20 @@ mod lang_items;
 pub mod syscall;
 
 pub use syscall::{
-    sys_close, sys_dup, sys_exec, sys_exit, sys_fork, sys_get_time, sys_getpid, sys_pipe,
-    sys_read, sys_waitpid, sys_write, sys_write_raw, sys_yield,
+    sys_close, sys_dup, sys_exec, sys_exit, sys_fork, sys_get_time, sys_getpid, sys_listdir,
+    sys_open, sys_pipe, sys_read, sys_waitpid, sys_write, sys_write_raw, sys_yield,
 };
+
+/// `open` 的标志位，取值和 Linux 一致。
+pub mod open_flags {
+    pub const RDONLY: u32 = 0;
+    pub const WRONLY: u32 = 1 << 0;
+    pub const RDWR: u32 = 1 << 1;
+    /// 不存在就创建
+    pub const CREATE: u32 = 1 << 9;
+    /// 打开时清空
+    pub const TRUNC: u32 = 1 << 10;
+}
 
 /// 标准输入的文件描述符。
 pub const STDIN: usize = 0;
@@ -68,6 +79,23 @@ pub fn write(fd: usize, buf: &[u8]) -> isize {
 /// 造一个管道。`fds[0]` 是读端，`fds[1]` 是写端。
 pub fn pipe(fds: &mut [i32; 2]) -> isize {
     sys_pipe(fds)
+}
+
+/// 打开（或创建）一个文件，返回 fd。失败返回负数。
+///
+/// `name` 不需要自带 `\0` —— 这里负责补上，理由同 [`exec`]。
+pub fn open(name: &str, flags: u32) -> isize {
+    let mut buf = [0u8; 128];
+    if name.len() >= buf.len() {
+        return -1;
+    }
+    buf[..name.len()].copy_from_slice(name.as_bytes());
+    sys_open(unsafe { core::str::from_utf8_unchecked(&buf[..=name.len()]) }, flags)
+}
+
+/// 列出根目录下的文件名（换行分隔），返回字节数。
+pub fn listdir(buf: &mut [u8]) -> isize {
+    sys_listdir(buf)
 }
 
 /// 复制一个文件描述符，返回当前**最小的空闲编号**。
