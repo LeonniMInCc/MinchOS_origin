@@ -126,20 +126,20 @@ fn print_memory_layout() {
 /// 内核的 Rust 入口。由 `entry.asm` 在支起栈之后调用，永不返回。
 #[no_mangle]
 pub fn rust_main() -> ! {
-    clear_bss();
+    // TODO: 第 1 章任务 1：在进入任何依赖全局变量的逻辑前清零 .bss。
+    // clear_bss();
+    let _ = clear_bss as fn();
 
-    println!("{}", BANNER);
-    println!("       CCNUOS v0.1.0 — RISC-V 64 (SV39) 教学操作系统");
-    println!("       第一周：裸机启动 / SBI 输出 / 内存布局\n");
+    // TODO: 第 1 章任务 2：用 SBI 串口输出接好 println!/info!，
+    // 打印课程要求的启动横幅、S 态入口确认和内存布局。
+    let _ = BANNER;
+    println!("CCNUOS v0.1 starter");
 
-    info!("内核已进入 S 态，启动栈可用，.bss 已清零");
-    print_memory_layout();
+    // TODO: 第 1 章任务 3：调用 print_memory_layout()，确认链接脚本导出的
+    // .text/.rodata/.data/.bss/boot_stack/kernel total 区间都正确。
+    let _ = print_memory_layout as fn();
 
-    debug!("这条是 DEBUG，默认被编译期过滤掉；试试 `LOG=DEBUG make run`");
-    trace!("这条是 TRACE，同上");
-    warn!("这是一条警告，用来验证颜色分级是否正常");
-    error!("这是一条错误，同样只是演示");
-
-    info!("第一周目标达成，主动关机");
+    // 当前 starter 会正常关机，但不会通过本章 selfcheck。
+    // 完成上面的 TODO 后，提交 ch01 分支让平台判题。
     sbi::shutdown(false)
 }
