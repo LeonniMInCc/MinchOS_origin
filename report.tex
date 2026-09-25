@@ -1,0 +1,69 @@
+\documentclass[a4paper,12pt]{ctexart}
+\usepackage{geometry}
+\geometry{left=2.5cm,right=2.5cm,top=2.5cm,bottom=2.5cm}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+
+\lstset{
+    language=Go,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    stringstyle=\color{red},
+    commentstyle=\color{green!60!black},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    breaklines=true,
+    frame=single
+}
+
+\title{\textbf{操作系统实验报告}\\ \Large 启动、系统初始化与进程PCB管理}
+\author{你的姓名 \quad 学号：你的学号 \quad 级别：Level A}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{实验目的}
+\begin{enumerate}
+    \item 掌握操作系统的启动与系统初始化流程。
+    \item 深入理解进程控制块（PCB）的设计原理。
+    \item 探究内存分配算法。针对固定大小的 PCB，采用高效的 SLUB 分配器策略替代传统的伙伴系统（Buddy System），避免内部碎片，提升分配效率。
+    \item 实现进程调度与多队列管理，深入理解原语操作（Create, Schedule, Block, Wakeup, Destroy）。
+\end{enumerate}
+
+\section{实验原理与设计}
+\subsection{SLUB 内存池设计}
+在操作系统中，频繁创建与销毁的定长结构体（如 PCB）不适合直接使用伙伴系统分配。本实验引入 SLUB 分配器机制，在系统初始化时申请大块连续内存，通过单向链表（FreeList）将其串联。分配与回收操作仅涉及链表头部指针的断开与头插，时间复杂度为 (1)$。
+
+\subsection{进程原语与队列调度}
+\begin{itemize}
+    \item \textbf{就绪队列与阻塞队列}：采用先进先出（FIFO）队列进行管理，由头指针（Head）与尾指针（Tail）维护。
+    \item \textbf{上下文调度}：支持时间片轮转。当调用 Schedule 原语时，将当前占用 CPU 的进程放入就绪队列尾部，将就绪队列头部的进程调度上 CPU 运行。
+\end{itemize}
+
+\section{核心代码实现}
+本项目选用具有高并发特性的 \textbf{Go 语言} 进行底层逻辑模拟。
+以下为 SLUB 内存分配与进程原语的核心代码片段：
+
+\begin{lstlisting}
+// SLUB 分配器初始化
+func (pool *SlubPool) Init(size int) {
+    pool.PoolSize = size
+    pool.Memory = make([]PCB, size)
+    for i := 0; i < size-1; i++ {
+        pool.Memory[i].Next = &pool.Memory[i+1]
+    }
+    pool.Memory[size-1].Next = nil
+    pool.FreeList = &pool.Memory[0]
+}
+\end{lstlisting}
+
+\section{实验结果与分析}
+（请在此处插入运行结果界面的截图，并结合题目要求的“三种快照”进行状态流转分析）
+
+\subsection{总结}
+通过本次实验，成功模拟了基于微内核架构的 OS 进程流转过程，实现了交互式的菜单管理，验证了 SLUB 机制在定长对象分配中的高效性。
+
+\end{document}
