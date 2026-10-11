@@ -1,7 +1,7 @@
 //! SBI (Supervisor Binary Interface) 调用封装
 //!
-//! 在 RISC-V 架构中，S 态内核不直接操作硬件，而是通过 ecall
-//! 指令向 M 态的 OpenSBI 固件请求服务。这个文件把 ecall 的
+//! 本实验选择让 S 态内核通过 ecall 使用固件的输出和关机服务，
+//! 向 M 态的 OpenSBI 发出请求。S 态是否能直接访问设备取决于权限与映射。此处将 ecall 的
 //! 汇编细节包装成 Rust 函数，使上层代码只需调用普通函数即可。
 
 use core::arch::asm;
