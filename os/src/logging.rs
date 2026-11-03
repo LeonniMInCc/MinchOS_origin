@@ -68,10 +68,7 @@ pub fn log(level: Level, args: fmt::Arguments) {
         return;
     }
     let (name, color) = level.style();
-    crate::console::print(format_args!(
-        "\u{1b}[{}m[{}] {}\u{1b}[0m\n",
-        color, name, args
-    ));
+    crate::console::print(format_args!("\u{1b}[{}m[{}] {}\u{1b}[0m\n", color, name, args));
 }
 
 #[macro_export]
