@@ -1,0 +1,10 @@
+[build]
+target = "riscv64gc-unknown-none-elf"
+
+[target.riscv64gc-unknown-none-elf]
+rustflags = [
+    # 用我们自己的链接脚本，把内核放到 SBI 约定的 0x80200000
+    "-Clink-arg=-Tsrc/linker.ld",
+    # 保留帧指针，之后做内核栈回溯（backtrace）时需要
+    "-Cforce-frame-pointers=yes",
+]

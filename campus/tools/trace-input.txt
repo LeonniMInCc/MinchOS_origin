@@ -1,0 +1,3 @@
+11forktest
+19philosophers
+exit

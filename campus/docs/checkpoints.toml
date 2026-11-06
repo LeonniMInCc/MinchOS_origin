@@ -1,0 +1,420 @@
+#
+# CCNUOS 章节验收清单 —— 判据的唯一来源
+#
+#   make regress      拿参考实现跑一遍。全过才说明判据本身没坏
+#   make grade CH=6   拿学生的代码判第 6 章
+#
+# 判据类型只有五种，见 tools/checker.py 的说明。
+#
+# ---------------------------------------------------------------------------
+# 写判据的三条规矩
+# ---------------------------------------------------------------------------
+#
+# 1. **must_not 比 must 值钱。** 用户程序自己知道什么是失败 ——
+#    "如果你看到这行，说明内核没拦住我"。判据盯着那句话就够了，
+#    不必去理解它在干什么。而且程序改了那句话会跟着改，
+#    写在外面的断言则会悄悄失去意义。
+#
+# 2. **判据必须在 v1.0 上也成立。** 学生从 v0.6-start 做到 v0.6，
+#    但功能是累加的 —— 第 6 章的判据在第 16 章依然该通过。
+#    所以不要断言"此时还没有 shell"这种会过期的东西。
+#
+# 3. **别为某道题发明新机制。** 判据类型一多，这份清单就没人读得下去了。
+#
+
+[meta]
+name = "CCNUOS"
+version = "1.0"
+
+# 对每一次启动都成立，除非某条判据写了 no_global = true
+global_must = ["页帧核对", "无泄漏"]
+global_must_not = ["[KERNEL PANIC]", "串口输入缓冲区溢出"]
+
+
+# ===========================================================================
+[[chapter]]
+n = 1
+name = "从上电到 Rust"
+tag = "v0.1"
+
+  [[chapter.check]]
+  type = "build"
+  name = "零告警编译"
+  points = 10
+
+  [[chapter.check]]
+  type = "selfcheck"
+  name = "内核接管机器、清零 .bss、打通串口输出"
+  points = 15
+  must = ["内核已进入 S 态", ".bss 已清零", "内核内存布局："]
+
+
+# ===========================================================================
+[[chapter]]
+n = 2
+name = "内核堆"
+tag = "v0.2"
+
+  [[chapter.check]]
+  type = "selfcheck"
+  name = "堆可用，且释放后精确归零"
+  points = 25
+  # "回落至 0 B" 是关键：只要求"能分配"的话，一个只分配不回收的
+  # 假分配器也能过
+  must = ["内核堆就绪：", "堆自检通过：", "释放后回落至 0 B"]
+
+
+# ===========================================================================
+[[chapter]]
+n = 3
+name = "特权级切换"
+tag = "v0.3"
+
+  [[chapter.check]]
+  type = "selfcheck"
+  name = "trap 入口已设置"
+  points = 5
+  must = ["trap 入口已设置："]
+
+  [[chapter.check]]
+  type = "run"
+  name = "用户程序在 U 态运行，靠 ecall 输出"
+  points = 10
+  commands = ["00hello_world"]
+  must = ["你好，我是跑在 U 态的第一个用户程序。", "现在我要 exit(0) 了。"]
+
+  [[chapter.check]]
+  type = "run"
+  name = "非法指令与非法访存被捕获，内核存活"
+  points = 10
+  commands = ["08bad_instruction", "09bad_address", "00hello_world"]
+  # 最后再跑一次 hello 是故意的：证明内核在杀掉两个作恶进程之后还活着
+  must = ["现在我要 exit(0) 了。"]
+  must_not = ["说明内核没拦住我", "说明写成功了"]
+
+  [[chapter.check]]
+  type = "run"
+  name = "拒绝用户传来的越界指针（含整数溢出构造）"
+  points = 10
+  commands = ["07bad_syscall_arg"]
+  must = ["被内核拒绝了"]
+  must_not = ["内核居然照做了"]
+
+
+# ===========================================================================
+[[chapter]]
+n = 4
+name = "多道程序"
+tag = "v0.4"
+
+  [[chapter.check]]
+  type = "run"
+  name = "三个任务交替执行，各自的状态精确保留"
+  points = 25
+  commands = ["01yield_a", "02yield_b", "03yield_c"]
+  must = ["[A] 四轮跑完", "[B] 四轮跑完", "[C] 四轮跑完", "隔离完好"]
+
+
+# ===========================================================================
+[[chapter]]
+n = 5
+name = "抢占式调度"
+tag = "v0.5"
+
+  [[chapter.check]]
+  type = "selfcheck"
+  name = "时钟中断已开启，内核自身保持不可抢占"
+  points = 10
+  must = ["时钟中断已开启：", "内核自身不可抢占"]
+
+  [[chapter.check]]
+  type = "run"
+  name = "从不让出的程序也会被切走，不会饿死别人"
+  points = 15
+  # 这两个从头到尾一次都不调 yield。跑得完就说明抢占真的发生了 ——
+  # 否则第一个会一直占着 CPU，第二个永远轮不上，整轮直接超时
+  commands = ["04spin_x", "05spin_y"]
+  must = ["[X] 全部算完", "[Y] 全部算完"]
+
+
+# ===========================================================================
+[[chapter]]
+n = 6
+name = "页帧分配器与 SV39 页表"
+tag = "v0.6"
+
+  [[chapter.check]]
+  type = "selfcheck"
+  name = "页帧分配/复用/清零/回收均正确"
+  points = 15
+  must = ["物理页帧分配器就绪：", "页帧自检通过：", "分配/复用/清零/回收均正确"]
+
+  [[chapter.check]]
+  type = "selfcheck"
+  name = "SV39 三级映射、权限位、解除映射、RAII 回收"
+  points = 15
+  must = ["页表自检通过：", "SV39 三级映射、权限位、解除映射、RAII 回收均正确"]
+
+
+# ===========================================================================
+[[chapter]]
+n = 7
+name = "开启分页"
+tag = "v0.7"
+
+  [[chapter.check]]
+  type = "selfcheck"
+  name = "内核在 SV39 下运行，SUM 保持关闭"
+  points = 15
+  must = ["建立内核地址空间", "分页已开启：", "SUM 保持关闭"]
+
+  [[chapter.check]]
+  type = "selfcheck"
+  name = "地址空间抽象：Framed 映射、跨页拷贝、RAII 整体回收"
+  points = 10
+  must = ["地址空间自检通过："]
+
+  [[chapter.check]]
+  type = "run"
+  name = "用户程序写内核代码段被 MMU 拦下"
+  points = 10
+  commands = ["10bad_kernel_write"]
+  must_not = ["说明内存隔离没生效"]
+
+
+# ===========================================================================
+[[chapter]]
+n = 8
+name = "跳板页与独立地址空间"
+tag = "v0.8"
+
+  [[chapter.check]]
+  type = "selfcheck"
+  name = "跳板页映射在每个地址空间的同一虚拟地址"
+  points = 10
+  must = ["用户态 0xfffffffffffff000（跳板页）"]
+
+  [[chapter.check]]
+  type = "run"
+  name = "三个程序在同一虚拟地址上各持有不同的值"
+  points = 20
+  # 这是"独立地址空间"最直接的证据：同样的地址，互不干扰
+  commands = ["01yield_a", "02yield_b", "03yield_c"]
+  must = ["隔离完好"]
+
+
+# ===========================================================================
+[[chapter]]
+n = 9
+name = "进程管理"
+tag = "v0.9"
+
+  [[chapter.check]]
+  type = "selfcheck"
+  name = "initproc 是用户态唯一的起点"
+  points = 5
+  must = ["initproc 已创建，pid = 0"]
+
+  [[chapter.check]]
+  type = "run"
+  name = "fork 出的父子各持一份数据，退出码正确回收"
+  points = 15
+  commands = ["11forktest"]
+  must = ["[fork] 父进程回收了 pid"]
+
+  [[chapter.check]]
+  type = "run"
+  name = "全部进程退出后页帧数与用户态启动前完全一致"
+  points = 10
+  # RAII 那条链的端到端检验：MemorySet → MapArea → FrameTracker，
+  # 以及 PidHandle 和 KernelStack。任何一环漏了这里就对不上
+  commands = ["11forktest", "19philosophers"]
+  must = ["页帧核对", "完全一致，无泄漏"]
+
+
+# ===========================================================================
+[[chapter]]
+n = 10
+name = "Shell"
+tag = "v0.10"
+
+  [[chapter.check]]
+  type = "run"
+  name = "能在 shell 里敲命令启动程序"
+  points = 15
+  commands = ["00hello_world"]
+  must = ["ccnuos>", "你好，我是跑在 U 态的第一个用户程序。"]
+
+  [[chapter.check]]
+  type = "run"
+  name = "作恶程序被杀之后 shell 依然存活"
+  points = 10
+  commands = ["08bad_instruction", "09bad_address", "10bad_kernel_write", "18ls"]
+  must = ["个文件"]
+  must_not = ["说明内核没拦住我", "说明写成功了", "说明内存隔离没生效"]
+
+
+# ===========================================================================
+[[chapter]]
+n = 11
+name = "管道"
+tag = "v0.11"
+
+  [[chapter.check]]
+  type = "run"
+  name = "单条管道：写端关闭后读端读到 EOF"
+  points = 10
+  commands = ["15pipetest"]
+  must = ["[管道·子] 读到 EOF"]
+
+  [[chapter.check]]
+  type = "run"
+  name = "三级流水线"
+  points = 15
+  commands = ["12words | 13upper | 14wc"]
+  must = ["行，", "字节"]
+
+
+# ===========================================================================
+[[chapter]]
+n = 12
+name = "块设备与块缓存"
+tag = "v0.12"
+
+  [[chapter.check]]
+  type = "selfcheck"
+  name = "virtio-blk 驱动就绪"
+  points = 10
+  must = ["virtio-blk：槽位"]
+
+  [[chapter.check]]
+  type = "unit"
+  name = "easy-fs 单元测试（宿主机，不需要 QEMU）"
+  points = 15
+  manifest = "easy-fs/Cargo.toml"
+  # at_least 是防删测试的：全删光也能"全部通过"
+  at_least = 18
+
+  [[chapter.check]]
+  type = "source"
+  name = "没有把测试标成 ignore 绕过去"
+  points = 0
+  files = ["easy-fs/src/*.rs"]
+  must_not = ["#[ignore]"]
+
+
+# ===========================================================================
+[[chapter]]
+n = 13
+name = "文件系统"
+tag = "v0.13"
+
+  [[chapter.check]]
+  type = "selfcheck"
+  name = "文件系统挂载成功"
+  points = 5
+  must = ["文件系统已挂载：", "持久化自检："]
+
+  [[chapter.check]]
+  type = "run"
+  name = "写、读、列目录、输出重定向"
+  points = 15
+  commands = ["17write", "16cat", "18ls", "12words > grade.txt"]
+  must = ["write: 往", "cat: 共", "个文件"]
+  must_not = ["打不开"]
+
+  [[chapter.check]]
+  type = "source"
+  name = "关机时必须把脏块写回磁盘"
+  points = 10
+  # 第 16 周踩过的坑：块缓存是写回式的，不显式 sync 就静默丢数据，
+  # 而且同一次运行里读得到（缓存命中），演示全都"正常"。
+  # 这条只能靠看源码 —— 跨重启的行为判据见下面那条
+  files = ["os/src/task/processor.rs"]
+  must = ["sync_all_blocks"]
+
+
+# ===========================================================================
+[[chapter]]
+n = 14
+name = "阻塞与唤醒"
+tag = "v0.14"
+
+  [[chapter.check]]
+  type = "selfcheck"
+  name = "串口输入是中断驱动的，不是轮询"
+  points = 10
+  must = ["串口输入已切换为中断驱动"]
+
+  [[chapter.check]]
+  type = "run"
+  name = "哲学家就餐不死锁、不饿死"
+  points = 10
+  commands = ["19philosophers"]
+  must = ["位哲学家都吃完了，没有人饿死"]
+  must_not = ["居然吃上了"]
+
+  [[chapter.check]]
+  type = "run"
+  name = "信号量强制顺序、条件变量广播唤醒"
+  points = 10
+  commands = ["20semaphore", "21condvar"]
+  must = ["顺序执行完毕", "个工人全部完成"]
+
+  [[chapter.check]]
+  type = "run"
+  name = "死锁必须被报出来，而不是伪装成正常关机"
+  points = 15
+  commands = ["22deadlock"]
+  # 这条是全清单里最重要的一条 must_not：一次死锁如果表现成
+  # "系统正常退出"，那是最糟糕的失败方式 —— 出了大事却什么都没说
+  must = ["死锁：就绪队列已空"]
+  must_not = ["就绪队列已空，全部进程执行完毕"]
+  # 死锁时进程还占着内存，页帧核对必然报"泄漏"，所以豁免全局断言
+  no_global = true
+
+
+# ===========================================================================
+[[chapter]]
+n = 15
+name = "教学可视化"
+tag = "v0.15"
+
+  [[chapter.check]]
+  type = "source"
+  name = "事件输出由编译期开关控制，默认关闭"
+  points = 10
+  files = ["os/src/trace.rs"]
+  must = ["option_env!(\"TRACE\")"]
+
+  [[chapter.check]]
+  type = "run"
+  name = "关闭时零开销：输出里不该有任何事件"
+  points = 15
+  commands = ["00hello_world"]
+  must_not = ["@EV"]
+
+
+# ===========================================================================
+[[chapter]]
+n = 16
+name = "回归测试与交付"
+tag = "v1.0"
+
+  [[chapter.check]]
+  type = "run"
+  name = "持久化：写进去的东西活过一次关机"
+  points = 15
+  # 判据本身跨不了两次启动，所以这里用启动计数器 —— 它由内核在
+  # 每次开机时读旧值 +1 再写回。能读到 "第 N 次" 就说明上一次真的落盘了。
+  # 跨重启的完整验证见 grade.py 里的 --persist
+  commands = ["17write", "16cat"]
+  must = ["持久化自检：", "cat: 共"]
+  must_not = ["打不开"]
+
+  [[chapter.check]]
+  type = "source"
+  name = "没有留下未实现的桩"
+  points = 0
+  files = ["os/src/**/*.rs", "easy-fs/src/*.rs"]
+  must_not = ["todo!(", "unimplemented!("]

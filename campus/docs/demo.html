@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CCNUOS 启动回放</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1b1e24;
+    --border: #2b3038;
+    --fg: #d4d4d4;
+    --muted: #8a8f98;
+    --accent: #6ba6ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 20px;
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .wrap { width: 100%; max-width: 900px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .sub code {
+    background: var(--panel); padding: 2px 6px; border-radius: 4px;
+    border: 1px solid var(--border); font-size: 12px;
+  }
+  .term {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,.4);
+  }
+  .bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    background: #202429;
+  }
+  .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .dot.r { background: #ff5f57; } .dot.y { background: #febc2e; } .dot.g { background: #28c840; }
+  .title { margin-left: 8px; color: var(--muted); font-size: 12px; }
+  pre {
+    margin: 0; padding: 16px 18px; height: 62vh; min-height: 360px;
+    overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px; line-height: 1.55;
+  }
+  .cursor {
+    display: inline-block; width: 7px; height: 14px;
+    background: var(--fg); vertical-align: -2px;
+    animation: blink 1.05s steps(2, start) infinite;
+  }
+  @keyframes blink { to { visibility: hidden; } }
+
+  .ctl {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-top: 14px;
+  }
+  button {
+    background: var(--panel); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 7px 14px; font-size: 13px; cursor: pointer;
+    font-family: inherit;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  label { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 7px; }
+  input[type=range] { width: 130px; accent-color: var(--accent); }
+  .progress {
+    flex: 1; min-width: 120px; height: 3px;
+    background: var(--border); border-radius: 2px; overflow: hidden;
+  }
+  .progress > i { display: block; height: 100%; width: 0; background: var(--accent); }
+
+  /* ANSI 颜色，按深色终端的可读性调过 */
+  .c-black   { color: #4a4f57; }
+  .c-red     { color: #ff6b6b; }
+  .c-green   { color: #6bcf7f; }
+  .c-yellow  { color: #e6b450; }
+  .c-blue    { color: #6ba6ff; }
+  .c-magenta { color: #d4bfff; }
+  .c-cyan    { color: #5ccfe6; }
+  .c-white   { color: #e6e6e6; }
+  .c-gray    { color: #8a8f98; }
+  .c-bright-yellow { color: #ffd166; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>CCNUOS 启动回放</h1>
+  <div class="sub">
+    QEMU virt / RISC-V 64 串口输出的真实记录，由 <code>make demo</code> 生成 ·
+    <span id="meta"></span>
+  </div>
+
+  <div class="term">
+    <div class="bar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="title">qemu-system-riscv64 — serial console</span>
+    </div>
+    <pre id="out"></pre>
+  </div>
+
+  <div class="ctl">
+    <button id="play">⏸ 暂停</button>
+    <button id="restart">↻ 重播</button>
+    <button id="skip">⏭ 跳到结尾</button>
+    <label>速度 <input id="speed" type="range" min="200" max="20000" step="200" value="4000"></label>
+    <span class="progress"><i id="bar"></i></span>
+  </div>
+</div>
+
+<script>
+const SEGMENTS = [[null, "\nOpenSBI v1.8.1\n   ____                    _____ ____ _____\n  / __ \\                  / ____|  _ \\_   _|\n | |  | |_ __   ___ _ __ | (___ | |_) || |\n | |  | | '_ \\ / _ \\ '_ \\ \\___ \\|  _ < | |\n | |__| | |_) |  __/ | | |____) | |_) || |_\n  \\____/| .__/ \\___|_| |_|_____/|____/_____|\n        | |\n        |_|\n\nPlatform Name               : riscv-virtio,qemu\nPlatform Features           : medeleg\nPlatform HART Count         : 1\nPlatform HART Protection    : pmp\nPlatform IPI Device         : aclint-mswi\nPlatform Timer Device       : aclint-mtimer @ 10000000Hz\nPlatform Console Device     : uart8250\nPlatform HSM Device         : ---\nPlatform PMU Device         : ---\nPlatform Reboot Device      : syscon-reboot\nPlatform Shutdown Device    : syscon-poweroff\nPlatform Suspend Device     : ---\nPlatform CPPC Device        : ---\nFirmware Base               : 0x80000000\nFirmware Size               : 321 KB\nFirmware RW Offset          : 0x40000\nFirmware RW Size            : 65 KB\nFirmware Heap Offset        : 0x47000\nFirmware Heap Size          : 37 KB (total), 0 KB (reserved), 12 KB (used), 23 KB (free)\nFirmware Scratch Size       : 4096 B (total), 1464 B (used), 2632 B (free)\nRuntime SBI Version         : 3.0\nStandard SBI Extensions     : time,rfnc,ipi,base,hsm,srst,pmu,dbcn,fwft,legacy,dbtr,sse\nExperimental SBI Extensions : none\n\nDomain0 Name                : root\nDomain0 Boot HART           : 0\nDomain0 HARTs               : 0*\nDomain0 Region00            : 0x0000000080040000-0x000000008005ffff M: (F,R,W) S/U: ()\nDomain0 Region01            : 0x0000000080000000-0x000000008003ffff M: (F,R,X) S/U: ()\nDomain0 Region02            : 0x0000000000100000-0x0000000000100fff M: (I,R,W) S/U: (R,W)\nDomain0 Region03            : 0x0000000010000000-0x0000000010000fff M: (I,R,W) S/U: (R,W)\nDomain0 Region04            : 0x0000000002000000-0x000000000200ffff M: (I,R,W) S/U: ()\nDomain0 Region05            : 0x000000000c400000-0x000000000c5fffff M: (I,R,W) S/U: (R,W)\nDomain0 Region06            : 0x000000000c000000-0x000000000c3fffff M: (I,R,W) S/U: (R,W)\nDomain0 Region07            : 0x0000000000000000-0xffffffffffffffff M: () S/U: (R,W,X)\nDomain0 Next Address        : 0x0000000080200000\nDomain0 Next Arg1           : 0x0000000087e00000\nDomain0 Next Mode           : S-mode\nDomain0 SysReset            : yes\nDomain0 SysSuspend          : yes\n\nBoot HART ID                : 0\nBoot HART Domain            : root\nBoot HART Priv Version      : v1.12\nBoot HART Base ISA          : rv64imafdch\nBoot HART ISA Extensions    : sstc,zicntr,zihpm,zicboz,zicbom,sdtrig,svadu\nBoot HART PMP Count         : 16\nBoot HART PMP Granularity   : 2 bits\nBoot HART PMP Address Bits  : 54\nBoot HART MHPM Info         : 16 (0x0007fff8)\nBoot HART Debug Triggers    : 2 triggers\nBoot HART MIDELEG           : 0x0000000000001666\nBoot HART MEDELEG           : 0x0000000000f4b509\n\n   ____   ____  _   _  _   _   ___   ____\n  / ___| / ___|| \\ | || | | | / _ \\ / ___|\n | |    | |    |  \\| || | | || | | |\\___ \\\n | |___ | |___ | |\\  || |_| || |_| | ___) |\n  \\____| \\____||_| \\_| \\___/  \\___/ |____/\n\n       CCNUOS v1.0.0 \u2014 RISC-V 64 (SV39) \u6559\u5b66\u64cd\u4f5c\u7cfb\u7edf\n       16 \u5468\u4ece\u96f6\u5199\u6210 \u00b7 \u8f93\u5165 help \u770b\u6709\u54ea\u4e9b\u7a0b\u5e8f\n\n"], ["c-blue", "[INFO ] \u5185\u6838\u5df2\u8fdb\u5165 S \u6001\uff0c\u542f\u52a8\u6808\u53ef\u7528\uff0c.bss \u5df2\u6e05\u96f6"], [null, "\n"], ["c-blue", "[INFO ] \u5185\u6838\u5185\u5b58\u5e03\u5c40\uff1a"], [null, "\n"], ["c-blue", "[INFO ]   .text            [0x0080200000, 0x008021b000)   110592 B  ( 108 KiB)"], [null, "\n"], ["c-blue", "[INFO ]   .rodata          [0x008021b000, 0x0080221000)    24576 B  (  24 KiB)"], [null, "\n"], ["c-blue", "[INFO ]   .data            [0x0080221000, 0x0080222000)     4096 B  (   4 KiB)"], [null, "\n"], ["c-blue", "[INFO ]   .bss             [0x0080232000, 0x0080536000)  3162112 B  (3088 KiB)"], [null, "\n"], ["c-blue", "[INFO ]   boot_stack       [0x0080222000, 0x0080232000)    65536 B  (  64 KiB)"], [null, "\n"], ["c-blue", "[INFO ]   kernel total     [0x0080200000, 0x0080536000)  \u5171 3288 KiB"], [null, "\n"], ["c-blue", "[INFO ] \u5185\u6838\u5806\u5c31\u7eea\uff1a[0x00802320b8, 0x00805320b8)  3072 KiB"], [null, "\n"], ["c-blue", "[INFO ] \u7269\u7406\u9875\u5e27\u5206\u914d\u5668\u5c31\u7eea\uff1aPPN:0x80536 .. PPN:0x88000\uff0c\u5171 31434 \u9875\uff08122 MiB\uff09\uff0c\u5df2\u7528 0"], [null, "\n"], ["c-blue", "[INFO ] \u5806\u81ea\u68c0\u901a\u8fc7\uff1a\u5bb9\u91cf 3072 KiB\uff0c\u5cf0\u503c\u5360\u7528 6680 B\uff0c\u91ca\u653e\u540e\u56de\u843d\u81f3 0 B"], [null, "\n"], ["c-blue", "[INFO ] \u9875\u5e27\u81ea\u68c0\u901a\u8fc7\uff1a\u5bb9\u91cf 31434 \u9875\uff08122 MiB\uff09\uff0c\u5206\u914d/\u590d\u7528/\u6e05\u96f6/\u56de\u6536\u5747\u6b63\u786e"], [null, "\n"], ["c-blue", "[INFO ] \u9875\u8868\u81ea\u68c0\u901a\u8fc7\uff1aSV39 \u4e09\u7ea7\u6620\u5c04\u3001\u6743\u9650\u4f4d\u3001\u89e3\u9664\u6620\u5c04\u3001RAII \u56de\u6536\u5747\u6b63\u786e\uff08\u8be5\u9875\u8868\u5171\u5360 6 \u9875\uff09"], [null, "\n"], ["c-blue", "[INFO ] \u5730\u5740\u7a7a\u95f4\u81ea\u68c0\u901a\u8fc7\uff1aFramed \u6620\u5c04\u3001\u8de8\u9875\u62f7\u8d1d\u3001RAII \u6574\u4f53\u56de\u6536\u5747\u6b63\u786e"], [null, "\n"], ["c-blue", "[INFO ] \u5efa\u7acb\u5185\u6838\u5730\u5740\u7a7a\u95f4\uff08\u5168\u90e8\u6052\u7b49\u6620\u5c04\uff09\uff1a"], [null, "\n"], ["c-blue", "[INFO ] \u5206\u9875\u5df2\u5f00\u542f\uff1asatp = 0x8000000000080539\uff0c7 \u4e2a\u903b\u8f91\u6bb5\uff0c\u9875\u8868\u81ea\u8eab\u5360 72 \u9875\uff08SUM \u4fdd\u6301\u5173\u95ed\uff09"], [null, "\n"], ["c-blue", "[INFO ] virtio-blk\uff1a\u69fd\u4f4d 0\uff080x10001000\uff09\uff0cMMIO v1\uff0c\u5bb9\u91cf 4096 \u6247\u533a\uff082048 KiB\uff09"], [null, "\n"], ["c-blue", "[INFO ] \u6587\u4ef6\u7cfb\u7edf\u5df2\u6302\u8f7d\uff1a\u6839\u76ee\u5f55 25 \u4e2a\u6587\u4ef6\uff0cinode 26 \u4e2a\uff0c\u6570\u636e\u5757 660/4096"], [null, "\n"], ["c-blue", "[INFO ] \u6301\u4e45\u5316\u81ea\u68c0\uff1a\u8fd9\u662f\u8fd9\u5757\u76d8\u7684\u7b2c 1 \u6b21\u542f\u52a8\uff08\u5df2\u521b\u5efa\u6587\u4ef6 bootcount\uff09"], [null, "\n"], ["c-blue", "[INFO ] trap \u5165\u53e3\u5df2\u8bbe\u7f6e\uff1a\u5185\u6838\u6001 0x80211ff4\uff0c\u7528\u6237\u6001 0xfffffffffffff000\uff08\u8df3\u677f\u9875\uff09"], [null, "\n"], ["c-blue", "[INFO ] \u65f6\u949f\u4e2d\u65ad\u5df2\u5f00\u542f\uff1a\u65f6\u95f4\u7247 10 ms\uff08\u5185\u6838\u81ea\u8eab\u4e0d\u53ef\u62a2\u5360\uff09"], [null, "\n"], ["c-blue", "[INFO ] \u4e32\u53e3\u8f93\u5165\u5df2\u5207\u6362\u4e3a\u4e2d\u65ad\u9a71\u52a8\uff08\u7f13\u51b2\u533a 256 \u5b57\u8282\uff09"], [null, "\n"], ["c-blue", "[INFO ] initproc \u5df2\u521b\u5efa\uff0cpid = 0"], [null, "\n[initproc] \u6211\u662f pid 0\uff0c\u6574\u4e2a\u7528\u6237\u6001\u4e16\u754c\u4ece\u6211\u5f00\u59cb\u3002\n[initproc] shell \u5df2\u542f\u52a8\uff0cpid = 1\n\nCCNUOS shell \u2014\u2014 \u8f93\u5165\u7a0b\u5e8f\u540d\u56de\u8f66\u6267\u884c\uff0c\u8f93\u5165 help \u770b\u6709\u54ea\u4e9b\u7a0b\u5e8f\uff0cexit \u9000\u51fa\nccnuos> help\n\u53ef\u4ee5\u8fd0\u884c\u7684\u7a0b\u5e8f\uff1a\n  00hello_world\n  01yield_a / 02yield_b / 03yield_c   \u5730\u5740\u7a7a\u95f4\u9694\u79bb\u6f14\u793a\n  04spin_x / 05spin_y                 \u62a2\u5360\u6f14\u793a\uff08\u4ece\u4e0d yield\uff09\n  06timer                             \u8ba1\u65f6\n  07bad_syscall_arg                   \u8d8a\u754c\u7cfb\u7edf\u8c03\u7528\u53c2\u6570\uff08\u4f1a\u88ab\u62d2\u7edd\uff09\n  08bad_instruction                   \u975e\u6cd5\u6307\u4ee4\uff08\u4f1a\u88ab\u6740\uff09\n  09bad_address                       \u8bbf\u95ee\u7a7a\u5730\u5740\uff08\u4f1a\u88ab\u6740\uff09\n  10bad_kernel_write                  \u8d8a\u6743\u5199\u5185\u6838\uff08\u4f1a\u88ab\u6740\uff09\n  11forktest                          fork \u8bed\u4e49\u6f14\u793a\n  12words / 13upper / 14wc            \u7ba1\u9053\u6f14\u793a\uff08\u8fc7\u6ee4\u5668\uff09\n  15pipetest                          \u76f4\u63a5\u7528 pipe() \u7684\u4f8b\u5b50\n  16cat                               \u8bfb\u78c1\u76d8\u6587\u4ef6 readme.txt\n  17write                             \u5199\u78c1\u76d8\u6587\u4ef6 readme.txt\n  18ls                                \u5217\u51fa\u6839\u76ee\u5f55\n  19philosophers                      \u54f2\u5b66\u5bb6\u5c31\u9910\uff08\u4e92\u65a5\u9501\uff09\n  20semaphore                         \u4fe1\u53f7\u91cf\u5f3a\u5236\u6267\u884c\u987a\u5e8f\n  21condvar                           \u6761\u4ef6\u53d8\u91cf\n  22deadlock                          \u6545\u610f\u6b7b\u9501\uff08\u5185\u6838\u4f1a\u62a5\u9519\uff09\n\u5185\u7f6e\u547d\u4ee4\uff1ahelp / exit\n\u652f\u6301\u7ba1\u9053\uff0c\u6700\u591a 4 \u7ea7\uff0c\u4f8b\u5982\uff1a\n  12words | 13upper\n  12words | 13upper | 14wc\n\u652f\u6301\u8f93\u51fa\u91cd\u5b9a\u5411\uff0c\u4f8b\u5982\uff1a\n  12words > out.txt\nccnuos> 18ls\n  00hello_world\n  01yield_a\n  02yield_b\n  03yield_c\n  04spin_x\n  05spin_y\n  06timer\n  07bad_syscall_arg\n  08bad_instruction\n  09bad_address\n  10bad_kernel_write\n  11forktest\n  12words\n  13upper\n  14wc\n  15pipetest\n  16cat\n  17write\n  18ls\n  19philosophers\n  20semaphore\n  21condvar\n  22deadlock\n  initproc\n  user_shell\n  bootcount\n\u5171 26 \u4e2a\u6587\u4ef6\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 2 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\nccnuos> 17write\nwrite: \u5f80 readme.txt \u5199\u4e86 42 \u5b57\u8282\uff08\u65f6\u95f4\u6233 2950 ms\uff09\nwrite: \u73b0\u5728\u53ef\u4ee5\u8dd1 16cat \u770b\u770b \u2014\u2014 \u91cd\u542f\u4e4b\u540e\u518d\u8dd1\u4e00\u6b21\uff0c\u5185\u5bb9\u8fd8\u5728\u3002\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 2 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\nccnuos> 16cat\nCCNUOS file system works.\nwritten at 2950\n\ncat: \u5171 42 \u5b57\u8282\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 2 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\nccnuos> 12words | 13upper | 14wc\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 2 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 3 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n3 \u884c\uff0c63 \u5b57\u8282\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 4 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\nccnuos> 20semaphore\n\u4e94\u4e2a\u8fdb\u7a0b\u4f1a\u4e25\u683c\u6309 0\u21924 \u7684\u987a\u5e8f\u6253\u5370\uff0c\u65e0\u8bba\u8c03\u5ea6\u5668\u600e\u4e48\u6392\u3002\n  \u6211\u662f\u7b2c 0 \u4e2a\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 3 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n  \u6211\u662f\u7b2c 1 \u4e2a\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 2 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n  \u6211\u662f\u7b2c 2 \u4e2a\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 5 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n  \u6211\u662f\u7b2c 3 \u4e2a\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 6 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n  \u6211\u662f\u7b2c 4 \u4e2a\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 7 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n\u987a\u5e8f\u6267\u884c\u5b8c\u6bd5\uff08\u5171 5 \u4e2a\u8fdb\u7a0b\uff09\u3002\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 4 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\nccnuos> 19philosophers\n\u4e94\u4f4d\u54f2\u5b66\u5bb6\u5165\u5ea7\uff0c\u6bcf\u4eba\u8981\u5403 3 \u8f6e\u3002\n  \u54f2\u5b66\u5bb6 0 \u7b2c 0 \u8f6e\uff1a\u62ff\u5230\u53c9\u5b50 0 \u548c 1\uff0c\u5f00\u5403\n  \u54f2\u5b66\u5bb6 2 \u7b2c 0 \u8f6e\uff1a\u62ff\u5230\u53c9\u5b50 2 \u548c 3\uff0c\u5f00\u5403\n  \u54f2\u5b66\u5bb6 1 \u7b2c 0 \u8f6e\uff1a\u62ff\u5230\u53c9\u5b50 1 \u548c 2\uff0c\u5f00\u5403\n  \u54f2\u5b66\u5bb6 4 \u7b2c 0 \u8f6e\uff1a\u62ff\u5230\u53c9\u5b50 0 \u548c 4\uff0c\u5f00\u5403\n  \u54f2\u5b66\u5bb6 0 \u7b2c 1 \u8f6e\uff1a\u62ff\u5230\u53c9\u5b50 0 \u548c 1\uff0c\u5f00\u5403\n  \u54f2\u5b66\u5bb6 3 \u7b2c 0 \u8f6e\uff1a\u62ff\u5230\u53c9\u5b50 3 \u548c 4\uff0c\u5f00\u5403\n  \u54f2\u5b66\u5bb6 4 \u7b2c 1 \u8f6e\uff1a\u62ff\u5230\u53c9\u5b50 0 \u548c 4\uff0c\u5f00\u5403\n  \u54f2\u5b66\u5bb6 2 \u7b2c 1 \u8f6e\uff1a\u62ff\u5230\u53c9\u5b50 2 \u548c 3\uff0c\u5f00\u5403\n  \u54f2\u5b66\u5bb6 3 \u7b2c 1 \u8f6e\uff1a\u62ff\u5230\u53c9\u5b50 3 \u548c 4\uff0c\u5f00\u5403\n  \u54f2\u5b66\u5bb6 1 \u7b2c 1 \u8f6e\uff1a\u62ff\u5230\u53c9\u5b50 1 \u548c 2\uff0c\u5f00\u5403\n  \u54f2\u5b66\u5bb6 2 \u7b2c 2 \u8f6e\uff1a\u62ff\u5230\u53c9\u5b50 2 \u548c 3\uff0c\u5f00\u5403\n  \u54f2\u5b66\u5bb6 0 \u7b2c 2 \u8f6e\uff1a\u62ff\u5230\u53c9\u5b50 0 \u548c 1\uff0c\u5f00\u5403\n  \u54f2\u5b66\u5bb6 2 \u5403\u9971\u4e86\uff0c\u79bb\u5e2d\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 5 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n  \u54f2\u5b66\u5bb6 3 \u7b2c 2 \u8f6e\uff1a\u62ff\u5230\u53c9\u5b50 3 \u548c 4\uff0c\u5f00\u5403\n  \u54f2\u5b66\u5bb6 0 \u5403\u9971\u4e86\uff0c\u79bb\u5e2d\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 7 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n  \u54f2\u5b66\u5bb6 1 \u7b2c 2 \u8f6e\uff1a\u62ff\u5230\u53c9\u5b50 1 \u548c 2\uff0c\u5f00\u5403\n  \u54f2\u5b66\u5bb6 3 \u5403\u9971\u4e86\uff0c\u79bb\u5e2d\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 2 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n  \u54f2\u5b66\u5bb6 1 \u5403\u9971\u4e86\uff0c\u79bb\u5e2d\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 6 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n  \u54f2\u5b66\u5bb6 4 \u7b2c 2 \u8f6e\uff1a\u62ff\u5230\u53c9\u5b50 0 \u548c 4\uff0c\u5f00\u5403\n  \u54f2\u5b66\u5bb6 4 \u5403\u9971\u4e86\uff0c\u79bb\u5e2d\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 3 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n5 \u4f4d\u54f2\u5b66\u5bb6\u90fd\u5403\u5b8c\u4e86\uff0c\u6ca1\u6709\u4eba\u997f\u6b7b\u3002\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 4 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\nccnuos> 21condvar\n\u56db\u4e2a\u5de5\u4eba\u542f\u52a8\u540e\u4f1a\u7acb\u523b\u7761\u4e0b\uff0c\u7b49\u5de5\u5934\u5e7f\u64ad\u3002\n\u5de5\u5934\uff1a\u5f00\u5de5\uff01\uff08broadcast\uff09\n  \u5de5\u4eba 0 \u5f00\u5de5\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 3 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n  \u5de5\u4eba   \u5de5\u4eba 2 \u5f00\u5de5\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 6 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n  \u5de5\u4eba 3 \u5f00\u5de5\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 5 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n1 \u5f00\u5de5\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 2 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n4 \u4e2a\u5de5\u4eba\u5168\u90e8\u5b8c\u6210\u3002\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 4 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\nccnuos> exit\n\u518d\u89c1\u3002\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 1 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n[initproc] \u56de\u6536\u5b50\u8fdb\u7a0b 1\uff0c\u9000\u51fa\u7801 0\n[initproc] \u5171\u56de\u6536 1 \u4e2a\u5b50\u8fdb\u7a0b\uff0c\u6536\u5de5\u3002\n"], ["c-blue", "[INFO ] \u8fdb\u7a0b 0 \u6b63\u5e38\u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n"], ["c-blue", "[INFO ] initproc \u9000\u51fa\uff0c\u9000\u51fa\u7801 0"], [null, "\n"], ["c-blue", "[INFO ] \u5c31\u7eea\u961f\u5217\u5df2\u7a7a\uff0c\u5168\u90e8\u8fdb\u7a0b\u6267\u884c\u5b8c\u6bd5"], [null, "\n"], ["c-blue", "[INFO ] \u9875\u5e27\u6838\u5bf9\uff1a72 \u9875\uff0c\u4e0e\u7528\u6237\u6001\u542f\u52a8\u524d\u5b8c\u5168\u4e00\u81f4\uff0c\u65e0\u6cc4\u6f0f"], [null, "\n"]];
+const TOTAL = SEGMENTS.reduce((n, s) => n + s[1].length, 0);
+
+const out = document.getElementById('out');
+const bar = document.getElementById('bar');
+const playBtn = document.getElementById('play');
+const speedEl = document.getElementById('speed');
+document.getElementById('meta').textContent = TOTAL + ' 字符';
+
+let shown = 0, playing = true, last = null;
+
+function esc(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function render() {
+  let budget = shown, html = '';
+  for (const [cls, text] of SEGMENTS) {
+    if (budget <= 0) break;
+    const part = text.length <= budget ? text : text.slice(0, budget);
+    budget -= part.length;
+    html += cls ? '<span class="' + cls + '">' + esc(part) + '</span>' : esc(part);
+  }
+  if (shown < TOTAL) html += '<span class="cursor"></span>';
+  out.innerHTML = html;
+  bar.style.width = (TOTAL ? (shown / TOTAL * 100) : 100) + '%';
+}
+
+function tick(now) {
+  if (last === null) last = now;
+  const dt = (now - last) / 1000;
+  last = now;
+
+  if (playing && shown < TOTAL) {
+    shown = Math.min(TOTAL, shown + Math.ceil(dt * Number(speedEl.value)));
+    render();
+    out.scrollTop = out.scrollHeight;   // 跟着输出往下滚
+    if (shown >= TOTAL) setPlaying(false);
+  }
+  requestAnimationFrame(tick);
+}
+
+function setPlaying(v) {
+  playing = v;
+  playBtn.textContent = v ? '⏸ 暂停' : '▶ 播放';
+}
+
+playBtn.onclick = () => {
+  if (shown >= TOTAL) { shown = 0; render(); }
+  setPlaying(!playing);
+};
+document.getElementById('restart').onclick = () => {
+  shown = 0; render(); out.scrollTop = 0; setPlaying(true);
+};
+document.getElementById('skip').onclick = () => {
+  shown = TOTAL; render(); out.scrollTop = out.scrollHeight; setPlaying(false);
+};
+
+render();
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

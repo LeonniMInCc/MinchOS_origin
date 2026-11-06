@@ -1,0 +1,15 @@
+target/
+fs.img
+*.bin
+# 录制的原始串口输出。渲染出的 html 才是要提交的东西。
+docs/demo.log
+docs/trace.log
+# 由 os/build.rs 生成
+os/src/link_app.S
+*.asm.txt
+qemu.log
+__pycache__/
+.DS_Store
+.idea/
+.vscode/
+score.json

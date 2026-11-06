@@ -1,0 +1,80 @@
+# 判题。学生 push 之后自动跑，结果贴回 PR。
+#
+# 判据在 docs/checkpoints.toml，引擎在 tools/checker.py —— 和本地
+# `make grade` 跑的是同一套东西。CI 上过不了而本地能过，只可能是环境差异，
+# 不可能是判据不一致。
+name: grade
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      chapter:
+        description: 只判某一章（留空 = 全部）
+        required: false
+
+jobs:
+  grade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装 QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-misc
+
+      - name: 装 Rust 工具链
+        # rust-toolchain.toml 已经钉死了版本和 target，rustup 会自己照办
+        run: |
+          rustup target add riscv64gc-unknown-none-elf
+          rustup component add rust-src llvm-tools
+          rustc --version && qemu-system-riscv64 --version | head -1
+
+      - name: 判题
+        id: grade
+        run: |
+          make grade CH="${{ inputs.chapter }}" FORMAT=json
+        continue-on-error: true
+
+      - name: 成绩单
+        run: |
+          python3 - <<'PY' >> $GITHUB_STEP_SUMMARY
+          import json
+          s = json.load(open("score.json"))
+          print(f"## {'✅ 通过' if s['pass'] else '❌ 未通过'}　"
+                f"{s['earned']}/{s['total']} 分")
+          if s["failed_checks"]:
+              print(f"\n**{s['failed_checks']} 条判据未通过**"
+                    "（不计分的门槛判据也算在内）\n")
+          print("| 章 | 名称 | 得分 | 未通过 |")
+          print("|---|---|---|---|")
+          for c in s["chapters"]:
+              bad = [k for k in c["checks"] if k["fails"]]
+              mark = "" if not bad else " ⚠️"
+              print(f"| {c['chapter']} | {c['name']}{mark} | "
+                    f"{c['earned']}/{c['points']} | "
+                    f"{'<br>'.join(k['name'] for k in bad) or '—'} |")
+          for c in s["chapters"]:
+              for k in c["checks"]:
+                  if k["fails"]:
+                      print(f"\n<details><summary>第 {c['chapter']} 章 · "
+                            f"{k['name']}</summary>\n")
+                      for f in k["fails"]:
+                          print(f"- {f}")
+                      print("\n</details>")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scorecard
+          path: score.json
+
+      - name: 判定
+        # 判题那一步用了 continue-on-error，好让成绩单无论如何都生成出来。
+        # 真正的成败在这里定 —— 依据是 pass 字段，不是分数：
+        # 门槛判据不值分，失败时分数一点不掉，但它必须让整个 job 红。
+        run: |
+          python3 -c "import json,sys; sys.exit(0 if json.load(open('score.json'))['pass'] else 1)"

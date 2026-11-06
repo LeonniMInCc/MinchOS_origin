@@ -1,0 +1,9 @@
+help
+18ls
+17write
+16cat
+12words | 13upper | 14wc
+20semaphore
+19philosophers
+21condvar
+exit

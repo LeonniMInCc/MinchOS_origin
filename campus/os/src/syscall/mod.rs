@@ -1,0 +1,95 @@
+//! 系统调用分派。
+//!
+//! 系统调用是用户程序**唯一**能请内核办事的途径。用户程序执行 `ecall`，
+//! CPU 从 U 态陷入 S 态，内核看一眼请求的是什么，办完再返回。
+//!
+//! # 调用约定
+//!
+//! 我们沿用 Linux 在 RISC-V 上的约定，这样以后想跑真实的用户程序会容易些：
+//!
+//! | 寄存器 | 用途           |
+//! |--------|----------------|
+//! | `a7`   | 系统调用号     |
+//! | `a0`   | 第 1 个参数 / 返回值 |
+//! | `a1`   | 第 2 个参数    |
+//! | `a2`   | 第 3 个参数    |
+//!
+//! 调用号也和 Linux 保持一致（`write` = 64，`exit` = 93），
+//! 都取自 `asm-generic/unistd.h`。
+
+mod fs;
+mod process;
+mod sync;
+
+use fs::{sys_close, sys_dup, sys_listdir, sys_open, sys_pipe, sys_read, sys_write};
+use sync::{
+    sys_condvar_broadcast, sys_condvar_create, sys_condvar_signal, sys_condvar_wait,
+    sys_mutex_create, sys_mutex_lock, sys_mutex_unlock, sys_semaphore_create, sys_semaphore_down,
+    sys_semaphore_up,
+};
+
+use process::{sys_exec, sys_exit, sys_fork, sys_get_time, sys_getpid, sys_waitpid, sys_yield};
+
+const SYSCALL_DUP: usize = 24;
+const SYSCALL_OPEN: usize = 56;
+/// 非 POSIX：真实系统用 getdents。见 `sys_listdir` 的说明。
+const SYSCALL_LISTDIR: usize = 1000;
+// 同步原语。同样不是 POSIX，见 syscall::sync 的模块文档。
+const SYSCALL_MUTEX_CREATE: usize = 1010;
+const SYSCALL_MUTEX_LOCK: usize = 1011;
+const SYSCALL_MUTEX_UNLOCK: usize = 1012;
+const SYSCALL_SEM_CREATE: usize = 1020;
+const SYSCALL_SEM_DOWN: usize = 1021;
+const SYSCALL_SEM_UP: usize = 1022;
+const SYSCALL_CONDVAR_CREATE: usize = 1030;
+const SYSCALL_CONDVAR_WAIT: usize = 1031;
+const SYSCALL_CONDVAR_SIGNAL: usize = 1032;
+const SYSCALL_CONDVAR_BROADCAST: usize = 1033;
+const SYSCALL_PIPE: usize = 59;
+const SYSCALL_CLOSE: usize = 57;
+const SYSCALL_READ: usize = 63;
+const SYSCALL_WRITE: usize = 64;
+const SYSCALL_EXIT: usize = 93;
+const SYSCALL_YIELD: usize = 124;
+const SYSCALL_GET_TIME: usize = 169;
+const SYSCALL_GETPID: usize = 172;
+const SYSCALL_FORK: usize = 220;
+const SYSCALL_EXEC: usize = 221;
+const SYSCALL_WAITPID: usize = 260;
+
+/// 分派一次系统调用。由 [`crate::trap::trap_handler`] 调用。
+pub fn syscall(id: usize, args: [usize; 3]) -> isize {
+    crate::event!("sys", "pid={} id={}", crate::task::current_pid(), id);
+    match id {
+        SYSCALL_DUP => sys_dup(args[0]),
+        SYSCALL_OPEN => sys_open(args[0], args[1] as u32),
+        SYSCALL_LISTDIR => sys_listdir(args[0], args[1]),
+        SYSCALL_MUTEX_CREATE => sys_mutex_create(),
+        SYSCALL_MUTEX_LOCK => sys_mutex_lock(args[0]),
+        SYSCALL_MUTEX_UNLOCK => sys_mutex_unlock(args[0]),
+        SYSCALL_SEM_CREATE => sys_semaphore_create(args[0]),
+        SYSCALL_SEM_DOWN => sys_semaphore_down(args[0]),
+        SYSCALL_SEM_UP => sys_semaphore_up(args[0]),
+        SYSCALL_CONDVAR_CREATE => sys_condvar_create(),
+        SYSCALL_CONDVAR_WAIT => sys_condvar_wait(args[0], args[1]),
+        SYSCALL_CONDVAR_SIGNAL => sys_condvar_signal(args[0]),
+        SYSCALL_CONDVAR_BROADCAST => sys_condvar_broadcast(args[0]),
+        SYSCALL_PIPE => sys_pipe(args[0]),
+        SYSCALL_CLOSE => sys_close(args[0]),
+        SYSCALL_READ => sys_read(args[0], args[1], args[2]),
+        SYSCALL_WRITE => sys_write(args[0], args[1], args[2]),
+        SYSCALL_EXIT => sys_exit(args[0] as i32),
+        SYSCALL_YIELD => sys_yield(),
+        SYSCALL_GET_TIME => sys_get_time(),
+        SYSCALL_GETPID => sys_getpid(),
+        SYSCALL_FORK => sys_fork(),
+        SYSCALL_EXEC => sys_exec(args[0]),
+        SYSCALL_WAITPID => sys_waitpid(args[0] as isize, args[1]),
+        _ => {
+            // 用户程序请求了一个不存在的服务。
+            // 这不该让内核崩溃 —— 返回错误码，让用户程序自己处理。
+            error!("未知的系统调用号 {}，参数 {:?}", id, args);
+            -1
+        }
+    }
+}
