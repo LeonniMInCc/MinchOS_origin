@@ -101,5 +101,5 @@ pub fn rust_main() -> ! {
     mm::init();
     mm::heap_test();
     println!("[INFO ] 第二周目标达成，主动关机");
-    sbi::shutdown();
+    sbi::shutdown(false);
 }
