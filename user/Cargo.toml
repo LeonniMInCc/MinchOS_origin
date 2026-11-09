@@ -1,0 +1,15 @@
+[package]
+name = "user_lib"
+version = "0.1.0"
+edition = "2021"
+description = "CCNUOS 用户态程序与运行库"
+
+[dependencies]
+
+[profile.release]
+debug = true
+panic = "abort"
+lto = false
+
+[profile.dev]
+panic = "abort"

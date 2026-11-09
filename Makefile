@@ -14,6 +14,12 @@ OS_DIR          := os
 KERNEL_ELF      := $(OS_DIR)/target/$(TARGET)/$(MODE)/os
 KERNEL_BIN      := $(KERNEL_ELF).bin
 
+# 用户程序是一个独立的 crate，链接到 0x80400000。
+# 编译产物被 build.rs 用 .incbin 嵌进内核镜像，所以必须先于内核构建。
+USER_DIR        := user
+USER_OUT        := $(USER_DIR)/target/$(TARGET)/release
+USER_NAMES      := $(basename $(notdir $(wildcard $(USER_DIR)/src/bin/*.rs)))
+
 # OpenSBI 固件加载在 0x80000000，初始化完成后跳转到这里。
 # 这个地址必须和 os/src/linker.ld 里的 BASE_ADDRESS 完全一致。
 KERNEL_ENTRY_PA := 0x80200000
@@ -47,7 +53,10 @@ QEMU_ARGS  := -machine virt \
               -bios default \
               -kernel $(KERNEL_BIN)
 
-.PHONY: all build run debug gdb clean fmt clippy asm env check
+DEMO_LOG   := docs/demo.log
+DEMO_HTML  := docs/demo.html
+
+.PHONY: all build run debug gdb clean fmt clippy asm env check demo user
 
 all: build
 
@@ -57,10 +66,20 @@ env:
 	@command -v $(QEMU) >/dev/null || { echo "找不到 $(QEMU)：请先 brew install qemu"; exit 1; }
 	@test -n "$(OBJCOPY)" || { echo "找不到 llvm-objcopy：请先 rustup component add llvm-tools"; exit 1; }
 
+# 先编译用户程序，再剥成裸二进制 —— 内核的 build.rs 会用 .incbin
+# 把这些 .bin 嵌进自己的 .data 段。本章还没有文件系统，
+# 这是内核携带用户程序的唯一办法。
+user: env
+	@cd $(USER_DIR) && $(CARGO) build --release
+	@for app in $(USER_NAMES); do \
+		$(OBJCOPY) --strip-all $(USER_OUT)/$$app -O binary $(USER_OUT)/$$app.bin; \
+	done
+	@echo "用户程序: $(USER_NAMES)"
+
 # 注意：必须 cd 进 os/ 再调 cargo。cargo 是按"当前工作目录"向上查找
 # .cargo/config.toml 的，用 --manifest-path 的话 os/.cargo/config.toml
 # 会被完全忽略，于是按宿主机架构编译，报一堆 "unknown register a0"。
-build: env
+build: env user
 	@cd $(OS_DIR) && LOG=$(LOG) $(CARGO) build $(CARGO_FLAGS)
 	@# 剥掉 ELF 头，得到可以直接加载到 0x80200000 的裸二进制
 	@$(OBJCOPY) --strip-all $(KERNEL_ELF) -O binary $(KERNEL_BIN)
@@ -70,6 +89,13 @@ run: build
 	@echo "启动 QEMU（Ctrl-A 然后按 X 可强制退出）"
 	@echo "------------------------------------------------------------"
 	@$(QEMU) $(QEMU_ARGS)
+
+# 录一次启动，渲染成可在浏览器里回放的单文件 HTML。
+# 适合放进答辩材料，或者发给没装 QEMU 的人看。
+demo: build
+	@bash tools/capture.sh $(DEMO_LOG) $(QEMU) $(QEMU_ARGS)
+	@python3 tools/ansi2html.py $(DEMO_LOG) $(DEMO_HTML)
+	@echo "用浏览器打开：$(CURDIR)/$(DEMO_HTML)"
 
 # 挂起在第一条指令，等 GDB 连 localhost:1234
 debug: build
@@ -98,3 +124,5 @@ clippy:
 
 clean:
 	@cd $(OS_DIR) && $(CARGO) clean
+	@cd $(USER_DIR) && $(CARGO) clean
+	@rm -f $(OS_DIR)/src/link_app.S

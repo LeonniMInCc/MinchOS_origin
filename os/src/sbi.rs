@@ -55,6 +55,15 @@ pub fn console_putchar(c: usize) {
     sbi_call(EID_LEGACY_CONSOLE_PUTCHAR, 0, c, 0, 0);
 }
 
+/// 读取 OpenSBI 提供的单调递增计时器值。
+pub fn get_time() -> usize {
+    let value;
+    unsafe {
+        asm!("rdtime {}", out(reg) value);
+    }
+    value
+}
+
 /// 关机。`failure` 为真时告诉固件这是一次异常退出。
 ///
 /// 优先用 SRST 扩展；老固件上 SRST 会返回 `ERR_NOT_SUPPORTED`，

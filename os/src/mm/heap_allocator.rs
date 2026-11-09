@@ -271,8 +271,7 @@ unsafe impl GlobalAlloc for LockedHeap {
 }
 
 #[global_allocator]
-static HEAP_ALLOCATOR: LockedHeap =
-    LockedHeap(unsafe { UPSafeCell::new(BuddyAllocator::empty()) });
+static HEAP_ALLOCATOR: LockedHeap = LockedHeap(unsafe { UPSafeCell::new(BuddyAllocator::empty()) });
 
 /// 内核堆空间。
 ///
@@ -384,7 +383,8 @@ pub fn heap_test() {
     // --- 泄漏检查：全部释放后必须精确回到基线 ---
     let (after, _) = stats();
     assert_eq!(
-        after, baseline,
+        after,
+        baseline,
         "内存泄漏：释放后仍占用 {} 字节",
         after - baseline
     );

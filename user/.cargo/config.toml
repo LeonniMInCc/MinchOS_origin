@@ -1,0 +1,8 @@
+[build]
+target = "riscv64gc-unknown-none-elf"
+
+[target.riscv64gc-unknown-none-elf]
+rustflags = [
+    # 用户程序被链接到 0x80400000 —— 内核的加载区
+    "-Clink-arg=-Tsrc/linker.ld",
+]

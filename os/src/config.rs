@@ -8,3 +8,24 @@
 /// 整块落在 `.bss` 段里 —— 所以这个数字直接决定内核镜像加载后占多少物理内存。
 /// 第 1 章那张布局表里 `.bss` 还是 0 字节，这一章之后会一下子涨到 3 MiB。
 pub const KERNEL_HEAP_SIZE: usize = 3 * 1024 * 1024;
+
+/// 用户程序的加载地址。
+///
+/// 本章没有分页，所有用户程序都被**链接到这同一个物理地址**，
+/// 每次只能装一个，装新的就覆盖旧的。这也是"批处理"的字面含义。
+///
+/// 第 7 周引入分页后，每个程序会有自己的地址空间，
+/// 它们可以都"以为"自己在同一个虚拟地址上，而实际占用不同的物理页。
+pub const APP_BASE_ADDRESS: usize = 0x8040_0000;
+
+/// 单个用户程序的大小上限：128 KiB。
+pub const APP_SIZE_LIMIT: usize = 0x2_0000;
+
+/// 用户栈大小：8 KiB。
+pub const USER_STACK_SIZE: usize = 4096 * 2;
+
+/// 内核栈大小：8 KiB。用户程序陷入内核后，内核在这上面运行。
+pub const KERNEL_STACK_SIZE: usize = 4096 * 2;
+
+/// 最多能链接进内核的用户程序数量。
+pub const MAX_APP_NUM: usize = 16;
